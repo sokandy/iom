@@ -1,148 +1,64 @@
-README — Quick Command Reference
+# README — Quick Command Reference (SQLite Edition)
 
-This file lists useful commands and small tools you can run from PowerShell in the project root (where `app.py` lives).
+此專案現已完全改用 **SQLite** 作為本地資料庫，所有指令都可以直接在專案根目錄（`app.py` 所在位置）執行，毋須再設定 ODBC/pyodbc。
 
-Prereqs
-- Activate venv first:
-  ```powershell
-  & ".\.env\Scripts\Activate.ps1"
-  ```
-- Ensure DB connectivity: place `credential.py` in the project root or set `ODBC_DSN` / `ODBC_CONN` (see `db.get_connection()` behavior in `db.py`).
+## 0. 建立虛擬環境（可選但建議）
+```powershell
+python -m venv .venv
+& ".\.venv\Scripts\Activate.ps1"
+python -m pip install -r requirements.txt
+```
 
-Configuring DB-backed mode (two options)
+## 1. 初始化 / Reset SQLite DB
+```powershell
+# 第一次使用（或想 reset）
+python tools\init_sqlite_db.py --reset
 
-Option A — Preferred: create a local `credential.py` (recommended for development)
-- Copy the example and edit with your values (do NOT commit):
-  ```powershell
-  copy .\credential.py.example .\credential.py
-  # then edit .\credential.py in your editor and fill server/database/username/password
-  ```
+# 使用自訂路徑
+python tools\init_sqlite_db.py --path "D:/data/iom.db"
+```
+- 預設會在 `iom/iom.db` 產生資料檔。
+- 如要覆蓋指定路徑，可設 `SQLITE_PATH` 或使用 `--path` 參數。
 
-Option B — Use environment variables (CI / ephemeral runs)
-- Using a DSN:
-  ```powershell
-  $env:ODBC_DSN='MyDsn'; $env:DB_USER='sa'; $env:DB_PASS='pw'
-  $env:USE_DB='1'
-  python app.py
-  ```
-- Or using a full connection string:
-  ```powershell
-  $env:ODBC_CONN="DRIVER={ODBC Driver 18 for SQL Server};SERVER=host;DATABASE=db;UID=user;PWD=pass"
-  $env:USE_DB='1'
-  python app.py
-  ```
+## 2. 執行 Flask App
+```powershell
+set USE_DB=1
+python app.py
+```
+- `USE_DB` 仍然存在，但現在使用 SQLite；未設定時會 fallback demo mode。
 
-Quick DB connection test
-- Run this tool to verify connectivity (uses the same `db.get_connection()` logic):
-  ```powershell
-  python tools/test_conn.py
-  ```
+## 3. 重要工具指令
+所有工具已透過 `db.get_connection()` 存取 SQLite，無需再設定 credential。
 
-Delete items by title (safe script)
-- A small helper script `tools/delete_items_by_title.py` can delete rows in the `items` table where `i_title` matches a string. It supports a dry-run and requires `--confirm` to perform the delete.
-- Examples (PowerShell):
-  ```powershell
-  # dry-run: shows count but does not delete
-  python tools\delete_items_by_title.py --dry-run
+| 用途 | 指令 |
+| --- | --- |
+| 測試連線 | `python tools\test_conn.py` |
+| 建立測試 item + auction | `python tools\create_item_and_auction.py` |
+| 列出會員 | `python tools\list_members.py` |
+| 調整 admin 權限 | `python tools\grant_revoke_admin.py grant 3` |
+| 重設密碼 | `python tools\reset_password.py --username alice --password NewPass123!` |
+| 冒煙測試 | `python tools\smoke_test.py` 或 `python tools\run_smoke_verbose.py` |
+| 自動 bid | `python tools\auto_place_bid.py`（先啟動 app.py） |
 
-  # actually delete rows with the default title 'E2E test direct'
-  python tools\delete_items_by_title.py --confirm
+> 舊有的 `odbc_schema_reader.py` / `show_pyodbc_drivers.py` 等純 SQL Server 工具仍保留作參考，但對 SQLite 不適用。
 
-  # specify a different title to match
-  python tools\delete_items_by_title.py --confirm --title "My test title"
-  ```
+## 4. 常用環境變數
+| 變數 | 用途 |
+| --- | --- |
+| `USE_DB` | 設為 `1` 即使用 SQLite DB；空值則進入 demo 模式 |
+| `SQLITE_PATH` | 指定 `iom.db` 的完整路徑 |
+| `CURRENCY_SYMBOL` / `CURRENCY_LABEL` | 控制顯示貨幣符號 |
+| `SMTP_*` | 寄出註冊確認 email（可留空，預設 log） |
 
-Notes
-- The script prefers the project's `db.get_connection()` helper. If that is not available it falls back to using `ODBC_CONN` or `ODBC_DSN` + `DB_USER`/`DB_PASS` from the environment.
+## 5. 單元測試
+```powershell
+python -m unittest tests.test_bids -v
+python -m unittest discover -v
+```
 
+## 6. 其他備註
+- `db_sqlserver.py` 保留舊版 SQL Server 連線實作，如需回滾可參考。
+- `iom.db` 已加入 `.gitignore`（請勿提交真正數據）。
+- 如果需要額外欄位/資料表，可在 `db.py` 的 `_SCHEMA_SQL` 裡擴充，再跑 `tools/init_sqlite_db.py --reset` 重新建庫。
 
-Run the app
-- Run Flask dev server (DB mode optional):
-  ```powershell
-  $env:USE_DB='1'
-  python app.py
-  ```
-
-Unit tests
-- Run specific tests:
-  ```powershell
-  python -m unittest tests.test_bids -v
-  ```
-- Run all tests:
-  ```powershell
-  python -m unittest discover -v
-  ```
-
-Tools (in `tools/`)
-- Smoke tests (Flask test client):
-  ```powershell
-  python tools/smoke_test.py
-  python tools/run_smoke_verbose.py
-  ```
-
-- DB connection check:
-  ```powershell
-  python tools/test_conn.py
-  ```
-
-- Schema reader (requires pyodbc):
-  ```powershell
-  # using DSN
-  $env:ODBC_DSN='MyDsn'; $env:DB_USER='sa'; $env:DB_PASS='pw'
-  python tools/odbc_schema_reader.py --tables auction item member --schema dbo --output schema.json --suggest-joins
-
-  # or using full connection string
-  $env:ODBC_CONN="DRIVER={ODBC Driver 18 for SQL Server};SERVER=host;DATABASE=db;UID=user;PWD=pass"
-  python tools/odbc_schema_reader.py --tables auction --schema dbo
-  ```
-
-- Create test data (item + auction) that matches current schema:
-  ```powershell
-  python tools/create_item_and_auction.py
-  ```
-
-- Create a simple auction (older helper; may use different column names):
-  ```powershell
-  python tools/create_test_auction.py
-  ```
-
-- Reset test passwords (edit file if you want different accounts):
-  ```powershell
-  python tools/reset_password.py
-  ```
-
-- Inspect members / admin flags:
-  ```powershell
-  python tools/list_members.py
-  python tools/inspect_m_is_admin.py
-  ```
-
-- Grant / revoke admin (CLI):
-  ```powershell
-  python tools/grant_revoke_admin.py grant 3
-  python tools/grant_revoke_admin.py revoke alice
-  ```
-
-- Quick login test (Flask test client):
-  ```powershell
-  python tools/login_alice_test.py
-  python tools/test_login.py
-  ```
-
-- Auto place bid (posts to running server, prints DB verification):
-  ```powershell
-  # defaults: AUCTION_ID=3, TEST_USER=alice, TEST_PASS=TestPass123!, BID_AMOUNT=2.00
-  $env:AUCTION_ID='3'; $env:BID_AMOUNT='2.00'
-  python tools/auto_place_bid.py
-  ```
-
-Utility files
-- `credential.py`: optional per-project credentials (preferred by `db.get_connection()`). Example fields: `server`, `database`, `username`, `password`, optional `DB_DRIVER` override.
-- `db.py`: contains `get_connection()` and helpers; review it if you need to change connection behavior.
-
-Notes & Troubleshooting
-- Most tools call `db.get_connection()` — if you see ODBC errors, create or update `credential.py` or set `ODBC_DSN`/`ODBC_CONN` + `DB_USER`/`DB_PASS`.
-- Run tools from the project root to avoid import path issues.
-- If using `auto_place_bid.py`, ensure the Flask server is running and reachable at `http://127.0.0.1:5000` (or set `APP_URL` env var).
-
-Want a wrapper CLI or different layout? Reply and I can create `tools/run.py` or expand this README with examples tailored to your environment.
+如需更多 CLI 包裝或專用 script，通知我再增加。

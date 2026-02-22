@@ -1,4 +1,5 @@
-pyodbc
+Flask
 itsdangerous
+Werkzeug
 pytest
-
+gunicorn
