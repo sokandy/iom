@@ -31,7 +31,13 @@ if USE_DB:
 AUTH_LOG = os.getenv('AUTH_LOG', 'auth.log')
 if AUTH_LOG.startswith('/'):
     log_dir = os.path.dirname(AUTH_LOG) or '/'
-    os.makedirs(log_dir, exist_ok=True)
+    try:
+        os.makedirs(log_dir, exist_ok=True)
+    except PermissionError:
+        fallback = os.path.join(os.getcwd(), os.path.basename(AUTH_LOG))
+        AUTH_LOG = fallback
+        log_dir = os.path.dirname(AUTH_LOG) or os.getcwd()
+        os.makedirs(log_dir, exist_ok=True)
 logger = logging.getLogger('auth')
 if not logger.handlers:
     h = logging.FileHandler(AUTH_LOG)
