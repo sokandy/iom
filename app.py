@@ -650,15 +650,27 @@ def seller_dashboard():
         return redirect(url_for('user_login'))
 
     auctions = []
+    stats = {
+        'total_auctions': 0,
+        'open_auctions': 0,
+        'closed_auctions': 0,
+        'sold_auctions': 0,
+        'no_sale_auctions': 0,
+        'total_bids': 0,
+        'gross_sales_display': 'HK$0.00',
+    }
+    activities = []
     if USE_DB:
         try:
-            from db import get_seller_dashboard_auctions
+            from db import get_seller_dashboard_auctions, get_seller_dashboard_stats, get_seller_recent_activity
             auctions = get_seller_dashboard_auctions(int(seller_id), limit=100)
+            stats = get_seller_dashboard_stats(int(seller_id))
+            activities = get_seller_recent_activity(int(seller_id), limit=20)
         except Exception as e:
             logger.exception('seller_dashboard failed: %s', e)
             flash('Could not load seller dashboard right now.', 'error')
 
-    return render_template('seller_dashboard.html', auctions=auctions)
+    return render_template('seller_dashboard.html', auctions=auctions, stats=stats, activities=activities)
 
 
 @app.route('/user_agreement')

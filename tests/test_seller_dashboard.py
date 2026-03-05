@@ -74,6 +74,58 @@ class SellerDashboardTests(unittest.TestCase):
         self.assertIn('HK$70.00', html)
         self.assertIn('>2<', html)
 
+    def test_dashboard_stats_and_recent_activity(self):
+        seller_id = self.db.create_member('seller_stats', 'Secret123!', email='seller_stats@example.com')
+        bidder_id = self.db.create_member('bidder_stats', 'Secret123!', email='bidder_stats@example.com')
+
+        sold_auction_id, _ = self.db.create_item_and_auction(
+            'Sold Item',
+            'Will be sold',
+            seller_id=seller_id,
+            starting_price=100.0,
+            end_date=datetime.utcnow() + timedelta(days=1),
+        )
+        no_sale_auction_id, _ = self.db.create_item_and_auction(
+            'No Sale Item',
+            'Will close without bids',
+            seller_id=seller_id,
+            starting_price=30.0,
+            end_date=datetime.utcnow() + timedelta(days=1),
+        )
+        open_auction_id, _ = self.db.create_item_and_auction(
+            'Open Item',
+            'Still open',
+            seller_id=seller_id,
+            starting_price=60.0,
+            end_date=datetime.utcnow() + timedelta(days=1),
+        )
+
+        self.assertTrue(self.db.place_bid(sold_auction_id, bidder_id, 120.0))
+
+        conn = self.db.get_connection()
+        try:
+            conn.execute("UPDATE auction SET a_status = 'closed' WHERE a_id = ?", (sold_auction_id,))
+            conn.execute("UPDATE auction SET a_status = 'closed' WHERE a_id = ?", (no_sale_auction_id,))
+            conn.execute("UPDATE auction SET a_status = 'open' WHERE a_id = ?", (open_auction_id,))
+            conn.commit()
+        finally:
+            conn.close()
+
+        with self.client.session_transaction() as sess:
+            sess['u_name'] = 'seller_stats'
+            sess['user_id'] = seller_id
+
+        resp = self.client.get('/seller/dashboard')
+        self.assertEqual(resp.status_code, 200)
+        html = resp.get_data(as_text=True)
+
+        self.assertIn('Total Auctions', html)
+        self.assertIn('Gross Sales', html)
+        self.assertIn('Recent Activity', html)
+        self.assertIn('Auction closed - sold at HK$120.00', html)
+        self.assertIn('Auction closed - no sale', html)
+        self.assertIn('New bid HK$120.00', html)
+
 
 if __name__ == '__main__':
     unittest.main()

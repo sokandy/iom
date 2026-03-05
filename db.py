@@ -321,6 +321,134 @@ def get_seller_dashboard_auctions(seller_id: int, limit: int = 100) -> List[dict
         conn.close()
 
 
+def get_seller_dashboard_stats(seller_id: int) -> dict:
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            """
+            SELECT COUNT(*) AS total_auctions,
+                   SUM(CASE WHEN LOWER(COALESCE(a.a_status, 'open')) = 'open' THEN 1 ELSE 0 END) AS open_auctions,
+                   SUM(CASE WHEN LOWER(COALESCE(a.a_status, 'open')) = 'closed' THEN 1 ELSE 0 END) AS closed_auctions,
+                   SUM(
+                       CASE
+                           WHEN LOWER(COALESCE(a.a_status, 'open')) = 'closed'
+                                AND EXISTS (SELECT 1 FROM bid b WHERE b.b_a_id = a.a_id)
+                           THEN 1 ELSE 0
+                       END
+                   ) AS sold_auctions,
+                   SUM(
+                       CASE
+                           WHEN LOWER(COALESCE(a.a_status, 'open')) = 'closed'
+                                AND NOT EXISTS (SELECT 1 FROM bid b WHERE b.b_a_id = a.a_id)
+                           THEN 1 ELSE 0
+                       END
+                   ) AS no_sale_auctions,
+                   SUM(COALESCE((SELECT COUNT(*) FROM bid b2 WHERE b2.b_a_id = a.a_id), 0)) AS total_bids,
+                   SUM(
+                       CASE
+                           WHEN LOWER(COALESCE(a.a_status, 'open')) = 'closed'
+                                AND EXISTS (SELECT 1 FROM bid b3 WHERE b3.b_a_id = a.a_id)
+                           THEN COALESCE((SELECT MAX(b4.b_amount) FROM bid b4 WHERE b4.b_a_id = a.a_id), 0)
+                           ELSE 0
+                       END
+                   ) AS gross_sales
+            FROM auction a
+            WHERE a.a_m_id = ?
+            """,
+            (seller_id,)
+        ).fetchone()
+        if not row:
+            return {
+                "total_auctions": 0,
+                "open_auctions": 0,
+                "closed_auctions": 0,
+                "sold_auctions": 0,
+                "no_sale_auctions": 0,
+                "total_bids": 0,
+                "gross_sales": 0.0,
+                "gross_sales_display": _format_money(0),
+            }
+        gross_sales = float(row["gross_sales"] or 0)
+        return {
+            "total_auctions": int(row["total_auctions"] or 0),
+            "open_auctions": int(row["open_auctions"] or 0),
+            "closed_auctions": int(row["closed_auctions"] or 0),
+            "sold_auctions": int(row["sold_auctions"] or 0),
+            "no_sale_auctions": int(row["no_sale_auctions"] or 0),
+            "total_bids": int(row["total_bids"] or 0),
+            "gross_sales": gross_sales,
+            "gross_sales_display": _format_money(gross_sales),
+        }
+    finally:
+        conn.close()
+
+
+def get_seller_recent_activity(seller_id: int, limit: int = 20) -> List[dict]:
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            """
+            SELECT * FROM (
+                SELECT b.b_time AS activity_time,
+                       'bid' AS activity_type,
+                       a.a_id AS auction_id,
+                       i.i_title AS title,
+                       b.b_amount AS amount,
+                       NULL AS result_type
+                FROM bid b
+                JOIN auction a ON a.a_id = b.b_a_id
+                JOIN item i ON i.i_id = a.a_item_id
+                WHERE a.a_m_id = ?
+
+                UNION ALL
+
+                SELECT COALESCE(a.updated_at, a.a_e_date, a.created_at) AS activity_time,
+                       'closed' AS activity_type,
+                       a.a_id AS auction_id,
+                       i.i_title AS title,
+                       COALESCE((SELECT MAX(b2.b_amount) FROM bid b2 WHERE b2.b_a_id = a.a_id), 0) AS amount,
+                       CASE
+                           WHEN EXISTS (SELECT 1 FROM bid b3 WHERE b3.b_a_id = a.a_id) THEN 'sold'
+                           ELSE 'no_sale'
+                       END AS result_type
+                FROM auction a
+                JOIN item i ON i.i_id = a.a_item_id
+                WHERE a.a_m_id = ?
+                  AND LOWER(COALESCE(a.a_status, '')) = 'closed'
+            )
+            ORDER BY activity_time DESC
+            LIMIT ?
+            """,
+            (seller_id, seller_id, limit)
+        ).fetchall()
+
+        activities = []
+        for row in rows:
+            amount = float(row["amount"] or 0)
+            act_type = row["activity_type"]
+            result_type = row["result_type"]
+            if act_type == 'bid':
+                message = f"New bid {_format_money(amount)}"
+            elif result_type == 'sold':
+                message = f"Auction closed - sold at {_format_money(amount)}"
+            else:
+                message = "Auction closed - no sale"
+
+            activities.append({
+                "time": row["activity_time"],
+                "type": act_type,
+                "auction_id": row["auction_id"],
+                "title": row["title"],
+                "amount": amount,
+                "amount_display": _format_money(amount),
+                "result_type": result_type,
+                "message": message,
+            })
+        return activities
+    finally:
+        conn.close()
+
+
 def get_user_by_username(username: str) -> Optional[dict]:
     conn = get_connection()
     row = conn.execute("SELECT * FROM member WHERE m_login_id = ?", (username,)).fetchone()
