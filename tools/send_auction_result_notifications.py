@@ -44,6 +44,13 @@ def process(limit: int = 200) -> dict:
             auction_url = _auction_url(auction_id)
 
             highest = get_auction_highest_bidder(auction_id)
+            reserve_price = auc.get("reserve_price")
+            if highest and reserve_price is not None:
+                try:
+                    if float(highest.get("amount") or 0) < float(reserve_price):
+                        highest = None
+                except Exception:
+                    pass
 
             if highest and highest.get("email"):
                 if mark_auction_notification_sent(auction_id, highest["email"], "winner"):

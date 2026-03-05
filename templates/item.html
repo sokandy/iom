@@ -75,7 +75,7 @@
   </div>
   <h1>{{ item.title }}</h1>
   <p><strong>Seller:</strong> {{ item.seller_id or 'Unknown' }}</p>
-  <p><strong>Reserve price:</strong> {{ item.current_bid }}</p>
+  <p><strong>Reserve price:</strong> {{ item.reserve_price or 'Not set' }}</p>
   <p><strong>Duration (days):</strong> {{ item.duration }}</p>
   <p><strong>Status:</strong> {{ item.status }}</p>
   <hr>
