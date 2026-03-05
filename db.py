@@ -78,6 +78,16 @@ CREATE TABLE IF NOT EXISTS category (
     cat_id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL UNIQUE
 );
+
+CREATE TABLE IF NOT EXISTS auction_notification_log (
+    n_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    auction_id INTEGER NOT NULL,
+    recipient_email TEXT NOT NULL,
+    notification_type TEXT NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(auction_id, recipient_email, notification_type),
+    FOREIGN KEY(auction_id) REFERENCES auction(a_id) ON DELETE CASCADE
+);
 """
 
 _DEFAULT_CATEGORIES = [
@@ -579,6 +589,92 @@ def update_auction_housekeeping(a_id: int, action: str, params: Optional[dict] =
                         (status, a_id))
         conn.commit()
         return cur.rowcount and cur.rowcount > 0
+    finally:
+        conn.close()
+
+def list_closed_auctions_for_result_notifications(limit: int = 200) -> List[dict]:
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            """
+            SELECT a.a_id,
+                   a.a_item_id,
+                   a.a_status,
+                   a.a_e_date,
+                   a.a_c_price,
+                   a.a_s_price,
+                   i.i_title,
+                   a.a_m_id AS seller_id,
+                   m.m_email AS seller_email
+            FROM auction a
+            JOIN item i ON i.i_id = a.a_item_id
+            LEFT JOIN member m ON m.m_id = a.a_m_id
+            WHERE LOWER(COALESCE(a.a_status, '')) = 'closed'
+            ORDER BY COALESCE(a.updated_at, a.created_at) DESC, a.a_id DESC
+            LIMIT ?
+            """,
+            (limit,)
+        ).fetchall()
+        return [
+            {
+                "auction_id": row["a_id"],
+                "item_id": row["a_item_id"],
+                "status": row["a_status"],
+                "end_time": row["a_e_date"],
+                "current_price": float(row["a_c_price"] or row["a_s_price"] or 0),
+                "title": row["i_title"],
+                "seller_id": row["seller_id"],
+                "seller_email": row["seller_email"],
+            }
+            for row in rows
+        ]
+    finally:
+        conn.close()
+
+
+def get_auction_highest_bidder(auction_id: int) -> Optional[dict]:
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            """
+            SELECT b.b_m_id,
+                   b.b_amount,
+                   b.b_time,
+                   m.m_email
+            FROM bid b
+            LEFT JOIN member m ON m.m_id = b.b_m_id
+            WHERE b.b_a_id = ?
+            ORDER BY b.b_amount DESC, b.b_time DESC, b.b_id DESC
+            LIMIT 1
+            """,
+            (auction_id,)
+        ).fetchone()
+        if not row:
+            return None
+        return {
+            "member_id": row["b_m_id"],
+            "email": row["m_email"],
+            "amount": float(row["b_amount"] or 0),
+            "time": row["b_time"],
+        }
+    finally:
+        conn.close()
+
+
+def mark_auction_notification_sent(auction_id: int, recipient_email: str, notification_type: str) -> bool:
+    if not recipient_email:
+        return False
+    conn = get_connection()
+    try:
+        cur = conn.execute(
+            """
+            INSERT OR IGNORE INTO auction_notification_log(auction_id, recipient_email, notification_type)
+            VALUES (?, ?, ?)
+            """,
+            (auction_id, recipient_email.strip().lower(), notification_type.strip().lower())
+        )
+        conn.commit()
+        return bool(cur.rowcount)
     finally:
         conn.close()
 

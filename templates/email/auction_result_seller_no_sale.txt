@@ -1,0 +1,4 @@
+Your auction ended with no bids: {{ auction_title }}.
+{% if auction_url %}
+View auction: {{ auction_url }}
+{% endif %}

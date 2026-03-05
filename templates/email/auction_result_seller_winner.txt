@@ -1,0 +1,7 @@
+Your auction has ended with a winner: {{ auction_title }}.
+{% if amount_text %}
+Final winning bid: {{ amount_text }}
+{% endif %}
+{% if auction_url %}
+View auction: {{ auction_url }}
+{% endif %}

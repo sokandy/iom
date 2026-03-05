@@ -175,6 +175,56 @@ def _send_email(to_email, subject, text, html=None):
     logger.info(f"Email (no SMTP configured) to {to_email}: {subject} | {text}")
     return True
 
+def send_auction_result_email(to_email, auction_title, auction_url, recipient_role, winning_amount=None):
+    if not to_email:
+        return False
+
+    symbol = os.getenv('CURRENCY_SYMBOL', 'HK$')
+    amount_text = None
+    if winning_amount is not None:
+        try:
+            amount_text = f"{symbol}{float(winning_amount):.2f}"
+        except Exception:
+            amount_text = str(winning_amount)
+
+    subject_map = {
+        'winner': 'You won the auction',
+        'seller_winner': 'Your auction has a winner',
+        'seller_no_sale': 'Your auction ended with no bids',
+    }
+    subject = subject_map.get(recipient_role, 'Auction result update')
+
+    context = {
+        'auction_title': auction_title,
+        'auction_url': auction_url,
+        'amount_text': amount_text,
+    }
+
+    template_map = {
+        'winner': ('email/auction_result_winner.txt', 'email/auction_result_winner.html'),
+        'seller_winner': ('email/auction_result_seller_winner.txt', 'email/auction_result_seller_winner.html'),
+        'seller_no_sale': ('email/auction_result_seller_no_sale.txt', 'email/auction_result_seller_no_sale.html'),
+    }
+    text_tmpl, html_tmpl = template_map.get(recipient_role, template_map['seller_no_sale'])
+
+    try:
+        text = render_template(text_tmpl, **context)
+    except Exception:
+        link_text = f"\nView auction: {auction_url}" if auction_url else ""
+        if recipient_role == 'winner':
+            text = f"You won {auction_title}. Winning bid: {amount_text}.{link_text}"
+        elif recipient_role == 'seller_winner':
+            text = f"Your auction {auction_title} ended with a winning bid of {amount_text}.{link_text}"
+        else:
+            text = f"Your auction {auction_title} ended with no bids.{link_text}"
+
+    try:
+        html = render_template(html_tmpl, **context)
+    except Exception:
+        html = None
+
+    return _send_email(to_email=to_email, subject=subject, text=text, html=html)
+
 
 def send_outbid_email(to_email, auction, previous_amount, new_amount):
     if not to_email:

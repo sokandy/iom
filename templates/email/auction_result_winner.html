@@ -1,0 +1,3 @@
+<p>Congratulations! You won the auction: <strong>{{ auction_title }}</strong>.</p>
+{% if amount_text %}<p>Winning bid: <strong>{{ amount_text }}</strong></p>{% endif %}
+{% if auction_url %}<p><a href="{{ auction_url }}">View auction</a></p>{% endif %}

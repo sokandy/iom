@@ -1,0 +1,7 @@
+Congratulations! You won the auction: {{ auction_title }}.
+{% if amount_text %}
+Winning bid: {{ amount_text }}
+{% endif %}
+{% if auction_url %}
+View auction: {{ auction_url }}
+{% endif %}
