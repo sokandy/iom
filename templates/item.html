@@ -91,6 +91,13 @@
     {% endif %}
   </p>
   <hr>
+  {% if u_name %}
+  <form method="post" action="{{ url_for('watchlist_toggle', auction_id=item.id) }}">
+    <input type="hidden" name="action" value="{{ 'remove' if watchlisted else 'add' }}">
+    <button type="submit">{{ 'Remove from Watchlist' if watchlisted else 'Add to Watchlist' }}</button>
+  </form>
+  <hr>
+  {% endif %}
   <h3>Place a bid</h3>
   {# Compute a suggested minimum: use highest_bid.a_s_price if present, otherwise item.current_bid #}
   {% set raw_price = (highest_bid.a_s_price if highest_bid is defined and highest_bid else (item.current_bid if item.current_bid is defined else 0)) %}
