@@ -78,6 +78,17 @@ CREATE TABLE IF NOT EXISTS category (
     cat_id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL UNIQUE
 );
+
+CREATE TABLE IF NOT EXISTS admin_audit_log (
+    log_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    admin_username TEXT,
+    action TEXT NOT NULL,
+    target TEXT,
+    result TEXT NOT NULL,
+    detail TEXT,
+    ip_address TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 _DEFAULT_CATEGORIES = [
@@ -548,6 +559,55 @@ def update_auction_housekeeping(a_id: int, action: str, params: Optional[dict] =
                         (status, a_id))
         conn.commit()
         return cur.rowcount and cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def log_admin_action(admin_username: str, action: str,
+                     target: Optional[str] = None,
+                     result: str = 'success',
+                     detail: Optional[str] = None,
+                     ip_address: Optional[str] = None) -> int:
+    conn = get_connection()
+    try:
+        cur = conn.execute(
+            """
+            INSERT INTO admin_audit_log(admin_username, action, target, result, detail, ip_address)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (admin_username, action, target, result, detail, ip_address)
+        )
+        conn.commit()
+        return int(cur.lastrowid or 0)
+    finally:
+        conn.close()
+
+
+def get_recent_admin_audit_logs(limit: int = 100) -> List[dict]:
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            """
+            SELECT log_id, admin_username, action, target, result, detail, ip_address, created_at
+            FROM admin_audit_log
+            ORDER BY log_id DESC
+            LIMIT ?
+            """,
+            (limit,)
+        ).fetchall()
+        return [
+            {
+                "log_id": row["log_id"],
+                "admin_username": row["admin_username"],
+                "action": row["action"],
+                "target": row["target"],
+                "result": row["result"],
+                "detail": row["detail"],
+                "ip_address": row["ip_address"],
+                "created_at": row["created_at"],
+            }
+            for row in rows
+        ]
     finally:
         conn.close()
 

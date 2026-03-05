@@ -511,6 +511,7 @@ def admin():
             '<li><a href="/admin/grant">Grant admin role</a></li>',
             '<li><a href="/admin/revoke">Revoke admin role</a></li>',
             '<li><a href="/admin/members">List members</a></li>',
+            '<li><a href="/admin/audit">View audit log</a></li>',
             '</ul>',
             '</body></html>'
         ]
@@ -530,6 +531,26 @@ def _require_admin():
     if not user or not user_is_admin(user):
         abort(403)
     return user
+
+
+def _audit_admin_action(user, action, target=None, result='success', detail=None):
+    if not USE_DB:
+        return
+    try:
+        from db import log_admin_action
+        admin_username = None
+        if isinstance(user, dict):
+            admin_username = user.get('username') or user.get('m_login_id')
+        log_admin_action(
+            admin_username=admin_username or session.get('u_name') or 'unknown',
+            action=str(action),
+            target=(str(target) if target is not None else None),
+            result=str(result),
+            detail=(str(detail) if detail is not None else None),
+            ip_address=request.remote_addr or _client_ip(),
+        )
+    except Exception as e:
+        logger.warning('audit logging failed: %s', e)
 
 
 def _resolve_member_id(identifier):
@@ -596,13 +617,17 @@ def admin_resend():
             token = generate_confirmation_token(member_id)
             ok = send_confirmation_email(email, token)
             if ok:
+                _audit_admin_action(user, 'resend_confirmation', target=member_id, result='success', detail=f'email={email}')
                 flash('Confirmation email sent.', 'success')
             else:
+                _audit_admin_action(user, 'resend_confirmation', target=member_id, result='error', detail='send_confirmation_email returned false')
                 flash('Failed to send confirmation email.', 'error')
         except Exception as e:
             logger.exception('admin_resend failed: %s', e)
+            _audit_admin_action(user, 'resend_confirmation', target=member_id, result='error', detail=str(e))
             flash('Failed to send confirmation email (server error).', 'error')
     else:
+        _audit_admin_action(user, 'resend_confirmation', target=member_id, result='error', detail='email not found')
         flash('Member email not found or DB not configured.', 'error')
     return redirect(url_for('admin'))
 
@@ -620,11 +645,14 @@ def admin_delete_auction(a_id):
         from db import delete_auction_and_bids
         deleted_auctions, deleted_bids = delete_auction_and_bids(a_id)
         if deleted_auctions:
+            _audit_admin_action(user, 'delete_auction', target=a_id, result='success', detail=f'bids={deleted_bids}')
             flash(f'Deleted auction {a_id} and {deleted_bids} bids.', 'success')
         else:
+            _audit_admin_action(user, 'delete_auction', target=a_id, result='warning', detail='no auction deleted')
             flash(f'No auction row deleted for id {a_id}.', 'warning')
     except Exception as e:
         logger.exception('admin_delete_auction failed: %s', e)
+        _audit_admin_action(user, 'delete_auction', target=a_id, result='error', detail=str(e))
         flash('Failed to delete auction (server error).', 'error')
     return redirect(url_for('admin'))
 
@@ -657,8 +685,10 @@ def admin_unlock():
     except Exception:
         pass
     if acted:
+        _audit_admin_action(user, 'unlock_member', target=member, result='success', detail=f'mid={mid}')
         flash('Member unlocked (best-effort).', 'success')
     else:
+        _audit_admin_action(user, 'unlock_member', target=member, result='error', detail=f'mid={mid}')
         flash('Failed to unlock member.', 'error')
     return redirect(url_for('admin'))
 
@@ -679,16 +709,21 @@ def admin_grant():
                 from db import set_member_admin
                 ok = set_member_admin(mid, True)
                 if ok:
+                    _audit_admin_action(user, 'grant_admin', target=member, result='success', detail=f'mid={mid}')
                     flash('Granted admin role.', 'success')
                 else:
+                    _audit_admin_action(user, 'grant_admin', target=member, result='warning', detail='no rows affected')
                     flash('Grant admin did not affect any rows.', 'error')
             except Exception as e:
                 logger.exception('admin_grant (db) failed: %s', e)
+                _audit_admin_action(user, 'grant_admin', target=member, result='error', detail=str(e))
                 flash('Failed to grant admin role (server error).', 'error')
         else:
+            _audit_admin_action(user, 'grant_admin', target=member, result='error', detail='db not configured or member not found')
             flash('DB not configured or member not found; cannot grant admin.', 'error')
     except Exception as e:
         logger.exception('admin_grant failed: %s', e)
+        _audit_admin_action(user, 'grant_admin', target=member, result='error', detail=str(e))
         flash('Failed to grant admin role (server error).', 'error')
     return redirect(url_for('admin'))
 
@@ -709,16 +744,21 @@ def admin_revoke():
                 from db import set_member_admin
                 ok = set_member_admin(mid, False)
                 if ok:
+                    _audit_admin_action(user, 'revoke_admin', target=member, result='success', detail=f'mid={mid}')
                     flash('Revoked admin role.', 'success')
                 else:
+                    _audit_admin_action(user, 'revoke_admin', target=member, result='warning', detail='no rows affected')
                     flash('Revoke admin did not affect any rows.', 'error')
             except Exception as e:
                 logger.exception('admin_revoke (db) failed: %s', e)
+                _audit_admin_action(user, 'revoke_admin', target=member, result='error', detail=str(e))
                 flash('Failed to revoke admin role (server error).', 'error')
         else:
+            _audit_admin_action(user, 'revoke_admin', target=member, result='error', detail='db not configured or member not found')
             flash('DB not configured or member not found; cannot revoke admin.', 'error')
     except Exception as e:
         logger.exception('admin_revoke failed: %s', e)
+        _audit_admin_action(user, 'revoke_admin', target=member, result='error', detail=str(e))
         flash('Failed to revoke admin role (server error).', 'error')
     return redirect(url_for('admin'))
 
@@ -778,15 +818,52 @@ def admin_auction_housekeep(a_id):
             from db import update_auction_housekeeping
             ok = update_auction_housekeeping(a_id, action, params)
             if ok:
+                _audit_admin_action(user, 'auction_housekeep', target=a_id, result='success', detail=f'action={action}, params={params}')
                 flash(f'Auction {a_id} updated: {action}', 'success')
             else:
+                _audit_admin_action(user, 'auction_housekeep', target=a_id, result='warning', detail=f'action={action}, no changes')
                 flash(f'No changes applied for auction {a_id}.', 'warning')
         except Exception as e:
             logger.exception('admin_auction_housekeep failed: %s', e)
+            _audit_admin_action(user, 'auction_housekeep', target=a_id, result='error', detail=str(e))
             flash('Failed to perform housekeeping (server error).', 'error')
     else:
+        _audit_admin_action(user, 'auction_housekeep', target=a_id, result='error', detail='db not configured')
         flash('DB not configured; cannot perform housekeeping.', 'error')
     return redirect(url_for('admin'))
+
+
+@app.route('/admin/audit')
+def admin_audit():
+    user = _require_admin()
+    if isinstance(user, tuple):
+        return user
+
+    rows = []
+    if USE_DB:
+        try:
+            from db import get_recent_admin_audit_logs
+            rows = get_recent_admin_audit_logs(limit=100)
+        except Exception as e:
+            logger.exception('admin_audit failed: %s', e)
+            rows = []
+
+    html = [
+        '<!doctype html>',
+        '<html><head><meta charset="utf-8"><title>Admin Audit</title></head><body>',
+        '<h1>Admin Audit Log (latest 100)</h1>',
+        '<p><a href="/admin">Back to Admin</a></p>',
+        '<table border="1" cellpadding="6" cellspacing="0">',
+        '<tr><th>ID</th><th>Time</th><th>Admin</th><th>Action</th><th>Target</th><th>Result</th><th>Detail</th><th>IP</th></tr>',
+    ]
+    for r in rows:
+        html.append(
+            f"<tr><td>{r.get('log_id')}</td><td>{r.get('created_at') or ''}</td><td>{r.get('admin_username') or ''}</td>"
+            f"<td>{r.get('action') or ''}</td><td>{r.get('target') or ''}</td><td>{r.get('result') or ''}</td>"
+            f"<td>{r.get('detail') or ''}</td><td>{r.get('ip_address') or ''}</td></tr>"
+        )
+    html.append('</table></body></html>')
+    return '\n'.join(html)
 
 
 @app.route('/auction/<int:item_id>')
