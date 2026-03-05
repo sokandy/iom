@@ -53,6 +53,14 @@ class SmokeTests(unittest.TestCase):
         # register template includes 'Register' as heading
         self.assertIn(b'Register', r.data)
 
+    def test_admin_demo_fallback_in_db_mode(self):
+        # In DB mode, if no admin row exists, demo admin credential should still work for legacy flows.
+        r = self.client.post('/user_login', data={'username': 'admin', 'password': 'adminpass'}, follow_redirects=True)
+        self.assertEqual(r.status_code, 200)
+        r = self.client.get('/admin', follow_redirects=True)
+        self.assertEqual(r.status_code, 200)
+        self.assertIn(b'Admin Panel', r.data)
+
 
 if __name__ == '__main__':
     unittest.main()
