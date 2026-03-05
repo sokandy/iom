@@ -552,6 +552,27 @@ def update_auction_housekeeping(a_id: int, action: str, params: Optional[dict] =
         conn.close()
 
 
+def close_expired_auctions(now: Optional[datetime] = None) -> int:
+    ref = now or datetime.utcnow()
+    ref_text = ref.strftime("%Y-%m-%d %H:%M:%S")
+    conn = get_connection()
+    try:
+        cur = conn.execute(
+            """
+            UPDATE auction
+            SET a_status = 'closed', updated_at = CURRENT_TIMESTAMP
+            WHERE a_e_date IS NOT NULL
+              AND a_e_date <= ?
+              AND (a_status IS NULL OR LOWER(a_status) = 'open')
+            """,
+            (ref_text,)
+        )
+        conn.commit()
+        return int(cur.rowcount or 0)
+    finally:
+        conn.close()
+
+
 def bootstrap_sqlite_db(reset: bool = False) -> Path:
     if reset and DB_PATH.exists():
         DB_PATH.unlink()
