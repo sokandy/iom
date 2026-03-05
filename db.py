@@ -160,27 +160,67 @@ def _compute_duration(start, end) -> Optional[int]:
         return None
 
 
-def get_auctions(limit: int = 50) -> List[dict]:
+def get_auctions(limit: Optional[int] = 50,
+                 keyword: Optional[str] = None,
+                 category: Optional[str] = None,
+                 status: Optional[str] = None,
+                 min_price: Optional[float] = None,
+                 max_price: Optional[float] = None) -> List[dict]:
     conn = get_connection()
-    sql = """
-        SELECT a.a_id,
-               a.a_item_id,
-               a.a_c_price,
-               a.a_s_price,
-               a.a_status,
-               a.a_s_date,
-               a.a_e_date,
-               i.i_title,
-               i.i_desc,
-               i.i_image,
-               i.i_m_id
-        FROM auction a
-        JOIN item i ON i.i_id = a.a_item_id
-        ORDER BY a.a_s_date DESC
-        LIMIT ?
-    """
-    rows = conn.execute(sql, (limit,)).fetchall()
-    conn.close()
+    try:
+        sql = """
+            SELECT a.a_id,
+                   a.a_item_id,
+                   a.a_c_price,
+                   a.a_s_price,
+                   a.a_status,
+                   a.a_s_date,
+                   a.a_e_date,
+                   i.i_title,
+                   i.i_desc,
+                   i.i_image,
+                   i.i_m_id,
+                   i.i_cat,
+                   i.i_s_cat
+            FROM auction a
+            JOIN item i ON i.i_id = a.a_item_id
+            WHERE 1=1
+        """
+        params = []
+
+        kw = (keyword or '').strip()
+        if kw:
+            sql += " AND (LOWER(COALESCE(i.i_title, '')) LIKE ? OR LOWER(COALESCE(i.i_desc, '')) LIKE ?)"
+            like_kw = f"%{kw.lower()}%"
+            params.extend([like_kw, like_kw])
+
+        cat = (category or '').strip()
+        if cat:
+            sql += " AND CAST(COALESCE(i.i_cat, '') AS TEXT) = ?"
+            params.append(cat)
+
+        st = (status or '').strip().lower()
+        if st:
+            sql += " AND LOWER(COALESCE(a.a_status, 'open')) = ?"
+            params.append(st)
+
+        if min_price is not None:
+            sql += " AND COALESCE(a.a_c_price, a.a_s_price, 0) >= ?"
+            params.append(float(min_price))
+
+        if max_price is not None:
+            sql += " AND COALESCE(a.a_c_price, a.a_s_price, 0) <= ?"
+            params.append(float(max_price))
+
+        sql += " ORDER BY a.a_s_date DESC"
+        if isinstance(limit, int) and limit > 0:
+            sql += " LIMIT ?"
+            params.append(limit)
+
+        rows = conn.execute(sql, tuple(params)).fetchall()
+    finally:
+        conn.close()
+
     results = []
     for row in rows:
         data = _row_to_dict(row)
@@ -194,6 +234,8 @@ def get_auctions(limit: int = 50) -> List[dict]:
             "image_url": image,
             "current_bid": _format_money(price),
             "seller_id": data.get("i_m_id"),
+            "category": data.get("i_cat"),
+            "sub_category": data.get("i_s_cat"),
             "start_date": data.get("a_s_date"),
             "end_time": data.get("a_e_date"),
             "duration": _compute_duration(data.get("a_s_date"), data.get("a_e_date")),
@@ -232,6 +274,179 @@ def get_auction(auction_id: int) -> Optional[dict]:
         "url": f"/auction/{data.get('a_id')}",
         "status": data.get("a_status", "open"),
     }
+
+
+def get_seller_dashboard_auctions(seller_id: int, limit: int = 100) -> List[dict]:
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            """
+            SELECT a.a_id,
+                   a.a_status,
+                   a.a_e_date,
+                   a.a_s_price,
+                   a.a_c_price,
+                   i.i_title,
+                   i.i_image,
+                   COUNT(b.b_id) AS bid_count,
+                   MAX(b.b_amount) AS highest_bid
+            FROM auction a
+            JOIN item i ON i.i_id = a.a_item_id
+            LEFT JOIN bid b ON b.b_a_id = a.a_id
+            WHERE a.a_m_id = ?
+            GROUP BY a.a_id, a.a_status, a.a_e_date, a.a_s_price, a.a_c_price, i.i_title, i.i_image
+            ORDER BY COALESCE(a.updated_at, a.created_at) DESC, a.a_id DESC
+            LIMIT ?
+            """,
+            (seller_id, limit)
+        ).fetchall()
+        items = []
+        for row in rows:
+            current = float(row["a_c_price"] or row["a_s_price"] or 0)
+            highest = row["highest_bid"]
+            items.append({
+                "auction_id": row["a_id"],
+                "title": row["i_title"],
+                "image_url": row["i_image"] or url_for_static_placeholder(),
+                "status": row["a_status"] or "open",
+                "end_time": row["a_e_date"],
+                "current_price": current,
+                "current_price_display": _format_money(current),
+                "highest_bid": float(highest or 0),
+                "highest_bid_display": _format_money(highest or 0),
+                "bid_count": int(row["bid_count"] or 0),
+            })
+        return items
+    finally:
+        conn.close()
+
+
+def get_seller_dashboard_stats(seller_id: int) -> dict:
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            """
+            SELECT COUNT(*) AS total_auctions,
+                   SUM(CASE WHEN LOWER(COALESCE(a.a_status, 'open')) = 'open' THEN 1 ELSE 0 END) AS open_auctions,
+                   SUM(CASE WHEN LOWER(COALESCE(a.a_status, 'open')) = 'closed' THEN 1 ELSE 0 END) AS closed_auctions,
+                   SUM(
+                       CASE
+                           WHEN LOWER(COALESCE(a.a_status, 'open')) = 'closed'
+                                AND EXISTS (SELECT 1 FROM bid b WHERE b.b_a_id = a.a_id)
+                           THEN 1 ELSE 0
+                       END
+                   ) AS sold_auctions,
+                   SUM(
+                       CASE
+                           WHEN LOWER(COALESCE(a.a_status, 'open')) = 'closed'
+                                AND NOT EXISTS (SELECT 1 FROM bid b WHERE b.b_a_id = a.a_id)
+                           THEN 1 ELSE 0
+                       END
+                   ) AS no_sale_auctions,
+                   SUM(COALESCE((SELECT COUNT(*) FROM bid b2 WHERE b2.b_a_id = a.a_id), 0)) AS total_bids,
+                   SUM(
+                       CASE
+                           WHEN LOWER(COALESCE(a.a_status, 'open')) = 'closed'
+                                AND EXISTS (SELECT 1 FROM bid b3 WHERE b3.b_a_id = a.a_id)
+                           THEN COALESCE((SELECT MAX(b4.b_amount) FROM bid b4 WHERE b4.b_a_id = a.a_id), 0)
+                           ELSE 0
+                       END
+                   ) AS gross_sales
+            FROM auction a
+            WHERE a.a_m_id = ?
+            """,
+            (seller_id,)
+        ).fetchone()
+        if not row:
+            return {
+                "total_auctions": 0,
+                "open_auctions": 0,
+                "closed_auctions": 0,
+                "sold_auctions": 0,
+                "no_sale_auctions": 0,
+                "total_bids": 0,
+                "gross_sales": 0.0,
+                "gross_sales_display": _format_money(0),
+            }
+        gross_sales = float(row["gross_sales"] or 0)
+        return {
+            "total_auctions": int(row["total_auctions"] or 0),
+            "open_auctions": int(row["open_auctions"] or 0),
+            "closed_auctions": int(row["closed_auctions"] or 0),
+            "sold_auctions": int(row["sold_auctions"] or 0),
+            "no_sale_auctions": int(row["no_sale_auctions"] or 0),
+            "total_bids": int(row["total_bids"] or 0),
+            "gross_sales": gross_sales,
+            "gross_sales_display": _format_money(gross_sales),
+        }
+    finally:
+        conn.close()
+
+
+def get_seller_recent_activity(seller_id: int, limit: int = 20) -> List[dict]:
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            """
+            SELECT * FROM (
+                SELECT b.b_time AS activity_time,
+                       'bid' AS activity_type,
+                       a.a_id AS auction_id,
+                       i.i_title AS title,
+                       b.b_amount AS amount,
+                       NULL AS result_type
+                FROM bid b
+                JOIN auction a ON a.a_id = b.b_a_id
+                JOIN item i ON i.i_id = a.a_item_id
+                WHERE a.a_m_id = ?
+
+                UNION ALL
+
+                SELECT COALESCE(a.updated_at, a.a_e_date, a.created_at) AS activity_time,
+                       'closed' AS activity_type,
+                       a.a_id AS auction_id,
+                       i.i_title AS title,
+                       COALESCE((SELECT MAX(b2.b_amount) FROM bid b2 WHERE b2.b_a_id = a.a_id), 0) AS amount,
+                       CASE
+                           WHEN EXISTS (SELECT 1 FROM bid b3 WHERE b3.b_a_id = a.a_id) THEN 'sold'
+                           ELSE 'no_sale'
+                       END AS result_type
+                FROM auction a
+                JOIN item i ON i.i_id = a.a_item_id
+                WHERE a.a_m_id = ?
+                  AND LOWER(COALESCE(a.a_status, '')) = 'closed'
+            )
+            ORDER BY activity_time DESC
+            LIMIT ?
+            """,
+            (seller_id, seller_id, limit)
+        ).fetchall()
+
+        activities = []
+        for row in rows:
+            amount = float(row["amount"] or 0)
+            act_type = row["activity_type"]
+            result_type = row["result_type"]
+            if act_type == 'bid':
+                message = f"New bid {_format_money(amount)}"
+            elif result_type == 'sold':
+                message = f"Auction closed - sold at {_format_money(amount)}"
+            else:
+                message = "Auction closed - no sale"
+
+            activities.append({
+                "time": row["activity_time"],
+                "type": act_type,
+                "auction_id": row["auction_id"],
+                "title": row["title"],
+                "amount": amount,
+                "amount_display": _format_money(amount),
+                "result_type": result_type,
+                "message": message,
+            })
+        return activities
+    finally:
+        conn.close()
 
 
 def get_user_by_username(username: str) -> Optional[dict]:
@@ -411,11 +626,16 @@ def get_current_highest_bidder(auction_id: int) -> Optional[dict]:
 
 def create_item(title: str, description: Optional[str] = None, owner_id: Optional[int] = None,
                 starting_price: float = 0.0, duration: int = 7, status: str = 'A',
-                image_path: Optional[str] = None) -> int:
+                image_path: Optional[str] = None,
+                category: Optional[str] = None,
+                sub_category: Optional[str] = None) -> int:
     conn = get_connection()
     cur = conn.execute(
-        "INSERT INTO item(i_m_id, i_title, i_desc, i_b_price, i_duration, i_status, i_image) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (owner_id, title, description, starting_price, duration, status, image_path)
+        """
+        INSERT INTO item(i_m_id, i_title, i_desc, i_b_price, i_duration, i_status, i_image, i_cat, i_s_cat)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (owner_id, title, description, starting_price, duration, status, image_path, category, sub_category)
     )
     conn.commit()
     item_id = cur.lastrowid
@@ -438,13 +658,28 @@ def create_auction(item_id: int, seller_id: Optional[int] = None, starting_price
 
 def create_item_and_auction(title: str, description: Optional[str], seller_id: Optional[int] = None,
                              starting_price: float = 0.0, end_date: Optional[datetime] = None,
-                             duration: int = 7, status: str = 'P') -> Tuple[int, int]:
+                             duration: int = 7, status: str = 'P',
+                             category: Optional[int] = None,
+                             sub_category: Optional[int] = None,
+                             **kwargs) -> Tuple[int, int]:
     conn = get_connection()
     try:
         cur = conn.cursor()
         cur.execute(
-            "INSERT INTO item(i_m_id, i_title, i_desc, i_b_price, i_duration, i_status) VALUES (?, ?, ?, ?, ?, ?)",
-            (seller_id, title, description, starting_price, duration, status)
+            """
+            INSERT INTO item(i_m_id, i_title, i_desc, i_b_price, i_duration, i_status, i_cat, i_s_cat)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                seller_id,
+                title,
+                description,
+                starting_price,
+                duration,
+                status,
+                str(category) if category is not None else None,
+                str(sub_category) if sub_category is not None else None,
+            )
         )
         item_id = cur.lastrowid
         cur.execute(

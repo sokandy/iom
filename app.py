@@ -394,27 +394,28 @@ def index():
 
 @app.route('/search')
 def search():
-    q = request.args.get('key_word', '')
+    filters = _parse_auction_filters(request.args)
     items = []
     if USE_DB and get_auctions:
         try:
-            items = get_auctions(q) or []
-        except TypeError:
-            try:
-                items = get_auctions() or []
-            except Exception as e:
-                logger.warning(f"get_auctions() failed in fallback: {e}")
-                items = []
+            items = get_auctions(
+                limit=filters['limit'],
+                keyword=filters['key_word'],
+                category=filters['category'],
+                status=filters['status'],
+                min_price=filters['min_price'],
+                max_price=filters['max_price'],
+            ) or []
         except Exception as e:
             logger.exception(f"Unexpected error in /search DB query: {e}")
             items = []
     try:
-        return render_template('auction_browse.html', items=items)
+        return render_template('auction_browse.html', items=items, filters=filters)
     except Exception as e:
         logger.exception(f"Template rendering failed in /search: {e}")
         if app.debug:
             return f"Error rendering auction_browse.html: {e}", 500
-        return render_template('auction_browse.html', items=[])
+        return render_template('auction_browse.html', items=[], filters=filters)
 
 
 @app.route('/browse')
@@ -425,29 +426,69 @@ def browse():
 
 @app.route('/auctions')
 def auctions():
-    qlimit = request.args.get('limit', '50')
-    if isinstance(qlimit, str) and qlimit.lower() in ('all', 'none', '0', 'no', 'unlimited'):
-        q = None
-    else:
-        try:
-            q = int(qlimit)
-        except Exception:
-            q = 50
+    filters = _parse_auction_filters(request.args)
 
     sample_items = []
     if USE_DB and get_auctions:
         try:
-            sample_items = get_auctions(limit=q)
+            sample_items = get_auctions(
+                limit=filters['limit'],
+                keyword=filters['key_word'],
+                category=filters['category'],
+                status=filters['status'],
+                min_price=filters['min_price'],
+                max_price=filters['max_price'],
+            )
         except Exception as e:
             logger.warning(f"get_auctions failed in /auctions: {e}")
             sample_items = []
     try:
-        return render_template('auction_browse.html', items=sample_items)
+        return render_template('auction_browse.html', items=sample_items, filters=filters)
     except Exception as e:
         logger.exception(f"Template rendering failed in /auctions: {e}")
         if app.debug:
             return f"Error rendering auction_browse.html: {e}", 500
         return "Internal server error", 500
+
+
+def _parse_auction_filters(args):
+    key_word = (args.get('key_word') or '').strip()
+    category = (args.get('category') or '').strip()
+    status = (args.get('status') or '').strip().lower()
+
+    qlimit = (args.get('limit') or '50').strip()
+    if qlimit.lower() in ('all', 'none', '0', 'no', 'unlimited'):
+        limit = None
+    else:
+        try:
+            limit = int(qlimit)
+            if limit <= 0:
+                limit = 50
+        except Exception:
+            limit = 50
+
+    def _as_float(name):
+        raw = (args.get(name) or '').strip()
+        if raw == '':
+            return None
+        try:
+            return float(raw)
+        except Exception:
+            return None
+
+    min_price = _as_float('min_price')
+    max_price = _as_float('max_price')
+    if min_price is not None and max_price is not None and min_price > max_price:
+        min_price, max_price = max_price, min_price
+
+    return {
+        'key_word': key_word,
+        'category': category,
+        'status': status,
+        'min_price': min_price,
+        'max_price': max_price,
+        'limit': limit,
+    }
 
 
 @app.route('/sell')
@@ -595,6 +636,41 @@ def user_menu():
         if app.debug:
             return f"Error: {e}", 500
         return "Internal server error", 500
+
+
+@app.route('/seller/dashboard')
+def seller_dashboard():
+    user = _user_dict_from_session()
+    if not user:
+        return redirect(url_for('user_login'))
+
+    seller_id = user.get('id') or user.get('m_id') or session.get('user_id')
+    if not seller_id:
+        flash('Unable to identify your seller account. Please login again.', 'error')
+        return redirect(url_for('user_login'))
+
+    auctions = []
+    stats = {
+        'total_auctions': 0,
+        'open_auctions': 0,
+        'closed_auctions': 0,
+        'sold_auctions': 0,
+        'no_sale_auctions': 0,
+        'total_bids': 0,
+        'gross_sales_display': 'HK$0.00',
+    }
+    activities = []
+    if USE_DB:
+        try:
+            from db import get_seller_dashboard_auctions, get_seller_dashboard_stats, get_seller_recent_activity
+            auctions = get_seller_dashboard_auctions(int(seller_id), limit=100)
+            stats = get_seller_dashboard_stats(int(seller_id))
+            activities = get_seller_recent_activity(int(seller_id), limit=20)
+        except Exception as e:
+            logger.exception('seller_dashboard failed: %s', e)
+            flash('Could not load seller dashboard right now.', 'error')
+
+    return render_template('seller_dashboard.html', auctions=auctions, stats=stats, activities=activities)
 
 
 @app.route('/user_agreement')

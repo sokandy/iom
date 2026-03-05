@@ -30,8 +30,7 @@
 
   <div class="container header-bottom">
     <div class="search">
-      <!-- Search endpoint removed; redirect queries to auctions listing as a best-effort fallback -->
-      <form name="search" action="{{ url_for('auctions') }}" method="get">
+      <form name="search" action="{{ url_for('search') }}" method="get">
         <input type="hidden" name="id">
         <label class="visually-hidden">Search</label>
         <input type="text" name="key_word" placeholder="Search auctions" aria-label="Search auctions">
