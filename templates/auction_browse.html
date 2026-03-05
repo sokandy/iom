@@ -9,6 +9,27 @@
 		<p class="muted-note">Browse current auctions. This page was modernized to the site layout.</p>
 	</header>
 
+	<section class="center-card-sm" aria-label="Search filters">
+		<form action="{{ url_for('search') }}" method="get">
+			<input type="text" name="key_word" placeholder="Keyword" value="{{ (filters.key_word if filters is defined else '') }}">
+			<select name="category">
+				<option value="">All categories</option>
+				{% for cid, cname in categories %}
+					<option value="{{ cid }}" {% if filters is defined and filters.category == cid %}selected{% endif %}>{{ cname }}</option>
+				{% endfor %}
+			</select>
+			<select name="status">
+				<option value="">All status</option>
+				<option value="open" {% if filters is defined and filters.status == 'open' %}selected{% endif %}>Open</option>
+				<option value="closed" {% if filters is defined and filters.status == 'closed' %}selected{% endif %}>Closed</option>
+				<option value="cancelled" {% if filters is defined and filters.status == 'cancelled' %}selected{% endif %}>Cancelled</option>
+			</select>
+			<input type="number" step="0.01" min="0" name="min_price" placeholder="Min price" value="{{ (filters.min_price if filters is defined and filters.min_price is not none else '') }}">
+			<input type="number" step="0.01" min="0" name="max_price" placeholder="Max price" value="{{ (filters.max_price if filters is defined and filters.max_price is not none else '') }}">
+			<button type="submit">Apply</button>
+		</form>
+	</section>
+
 	<section class="items-grid" aria-live="polite">
 		{% for item in items|default([]) %}
 			<article class="item-card">
@@ -17,6 +38,7 @@
 					<h2 class="item-title">{{ item.title if item.title is defined else 'Untitled' }}</h2>
 				</a>
 				<p class="muted-note">Current bid: {{ item.current_bid if item.current_bid is defined else 'N/A' }}</p>
+				<p class="muted-note">Status: {{ item.status if item.status is defined else 'open' }}</p>
 			</article>
 		{% else %}
 			<div class="center-card-sm">

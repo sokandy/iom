@@ -160,27 +160,67 @@ def _compute_duration(start, end) -> Optional[int]:
         return None
 
 
-def get_auctions(limit: int = 50) -> List[dict]:
+def get_auctions(limit: Optional[int] = 50,
+                 keyword: Optional[str] = None,
+                 category: Optional[str] = None,
+                 status: Optional[str] = None,
+                 min_price: Optional[float] = None,
+                 max_price: Optional[float] = None) -> List[dict]:
     conn = get_connection()
-    sql = """
-        SELECT a.a_id,
-               a.a_item_id,
-               a.a_c_price,
-               a.a_s_price,
-               a.a_status,
-               a.a_s_date,
-               a.a_e_date,
-               i.i_title,
-               i.i_desc,
-               i.i_image,
-               i.i_m_id
-        FROM auction a
-        JOIN item i ON i.i_id = a.a_item_id
-        ORDER BY a.a_s_date DESC
-        LIMIT ?
-    """
-    rows = conn.execute(sql, (limit,)).fetchall()
-    conn.close()
+    try:
+        sql = """
+            SELECT a.a_id,
+                   a.a_item_id,
+                   a.a_c_price,
+                   a.a_s_price,
+                   a.a_status,
+                   a.a_s_date,
+                   a.a_e_date,
+                   i.i_title,
+                   i.i_desc,
+                   i.i_image,
+                   i.i_m_id,
+                   i.i_cat,
+                   i.i_s_cat
+            FROM auction a
+            JOIN item i ON i.i_id = a.a_item_id
+            WHERE 1=1
+        """
+        params = []
+
+        kw = (keyword or '').strip()
+        if kw:
+            sql += " AND (LOWER(COALESCE(i.i_title, '')) LIKE ? OR LOWER(COALESCE(i.i_desc, '')) LIKE ?)"
+            like_kw = f"%{kw.lower()}%"
+            params.extend([like_kw, like_kw])
+
+        cat = (category or '').strip()
+        if cat:
+            sql += " AND CAST(COALESCE(i.i_cat, '') AS TEXT) = ?"
+            params.append(cat)
+
+        st = (status or '').strip().lower()
+        if st:
+            sql += " AND LOWER(COALESCE(a.a_status, 'open')) = ?"
+            params.append(st)
+
+        if min_price is not None:
+            sql += " AND COALESCE(a.a_c_price, a.a_s_price, 0) >= ?"
+            params.append(float(min_price))
+
+        if max_price is not None:
+            sql += " AND COALESCE(a.a_c_price, a.a_s_price, 0) <= ?"
+            params.append(float(max_price))
+
+        sql += " ORDER BY a.a_s_date DESC"
+        if isinstance(limit, int) and limit > 0:
+            sql += " LIMIT ?"
+            params.append(limit)
+
+        rows = conn.execute(sql, tuple(params)).fetchall()
+    finally:
+        conn.close()
+
     results = []
     for row in rows:
         data = _row_to_dict(row)
@@ -194,6 +234,8 @@ def get_auctions(limit: int = 50) -> List[dict]:
             "image_url": image,
             "current_bid": _format_money(price),
             "seller_id": data.get("i_m_id"),
+            "category": data.get("i_cat"),
+            "sub_category": data.get("i_s_cat"),
             "start_date": data.get("a_s_date"),
             "end_time": data.get("a_e_date"),
             "duration": _compute_duration(data.get("a_s_date"), data.get("a_e_date")),
@@ -456,11 +498,16 @@ def get_current_highest_bidder(auction_id: int) -> Optional[dict]:
 
 def create_item(title: str, description: Optional[str] = None, owner_id: Optional[int] = None,
                 starting_price: float = 0.0, duration: int = 7, status: str = 'A',
-                image_path: Optional[str] = None) -> int:
+                image_path: Optional[str] = None,
+                category: Optional[str] = None,
+                sub_category: Optional[str] = None) -> int:
     conn = get_connection()
     cur = conn.execute(
-        "INSERT INTO item(i_m_id, i_title, i_desc, i_b_price, i_duration, i_status, i_image) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (owner_id, title, description, starting_price, duration, status, image_path)
+        """
+        INSERT INTO item(i_m_id, i_title, i_desc, i_b_price, i_duration, i_status, i_image, i_cat, i_s_cat)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (owner_id, title, description, starting_price, duration, status, image_path, category, sub_category)
     )
     conn.commit()
     item_id = cur.lastrowid
@@ -483,13 +530,28 @@ def create_auction(item_id: int, seller_id: Optional[int] = None, starting_price
 
 def create_item_and_auction(title: str, description: Optional[str], seller_id: Optional[int] = None,
                              starting_price: float = 0.0, end_date: Optional[datetime] = None,
-                             duration: int = 7, status: str = 'P') -> Tuple[int, int]:
+                             duration: int = 7, status: str = 'P',
+                             category: Optional[int] = None,
+                             sub_category: Optional[int] = None,
+                             **kwargs) -> Tuple[int, int]:
     conn = get_connection()
     try:
         cur = conn.cursor()
         cur.execute(
-            "INSERT INTO item(i_m_id, i_title, i_desc, i_b_price, i_duration, i_status) VALUES (?, ?, ?, ?, ?, ?)",
-            (seller_id, title, description, starting_price, duration, status)
+            """
+            INSERT INTO item(i_m_id, i_title, i_desc, i_b_price, i_duration, i_status, i_cat, i_s_cat)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                seller_id,
+                title,
+                description,
+                starting_price,
+                duration,
+                status,
+                str(category) if category is not None else None,
+                str(sub_category) if sub_category is not None else None,
+            )
         )
         item_id = cur.lastrowid
         cur.execute(
