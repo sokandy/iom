@@ -448,6 +448,17 @@ def sell():
     return redirect(url_for('new_auction'))
 
 
+@app.route('/help')
+def help_page():
+    try:
+        return render_template('how_to_bid.html')
+    except Exception:
+        try:
+            return render_template('contact.html')
+        except Exception:
+            return 'Help page unavailable', 200
+
+
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     if request.method == 'POST':
@@ -495,6 +506,21 @@ def register():
     if session.get('u_name'):
         return render_template('register.html', already=True)
     return render_template('register.html')
+
+
+@app.route('/confirm/<token>')
+def confirm_registration(token):
+    data = confirm_token(token)
+    if not data:
+        return render_template('register.html', message='Invalid or expired confirmation link.')
+    member_id = data.get('m_id') if isinstance(data, dict) else None
+    if USE_DB and member_id:
+        try:
+            from db import confirm_member
+            confirm_member(int(member_id))
+        except Exception as e:
+            logger.warning(f"confirm_registration failed for m_id={member_id}: {e}")
+    return render_template('register.html', confirmed=True)
 
 
 @app.route('/user_login', methods=['GET', 'POST'])
@@ -748,6 +774,12 @@ def admin_resend():
     return redirect(url_for('admin'))
 
 
+@app.route('/admin/resend/<member_id>', methods=['GET', 'POST'])
+def admin_resend_legacy(member_id):
+    code = 307 if request.method == 'POST' else 302
+    return redirect(url_for('admin_resend', member_id=member_id), code=code)
+
+
 @app.route('/admin/auction/<int:a_id>/delete', methods=['POST'])
 def admin_delete_auction(a_id):
     """Admin-only endpoint to permanently delete an auction and its bids."""
@@ -807,6 +839,11 @@ def admin_unlock():
         _audit_admin_action(user, 'unlock_member', target=member, result='error', detail=f'mid={mid}')
         flash('Failed to unlock member.', 'error')
     return redirect(url_for('admin'))
+
+
+@app.route('/admin/unlock/<member>', methods=['POST'])
+def admin_unlock_legacy(member):
+    return redirect(url_for('admin_unlock', member=member), code=307)
 
 
 @app.route('/admin/grant', methods=['POST'])
