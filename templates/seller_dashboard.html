@@ -1,0 +1,37 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="center-card">
+  <h1>Seller Dashboard</h1>
+  <p>Your latest auctions (up to 100):</p>
+
+  {% if auctions %}
+  <table border="1" cellpadding="6" cellspacing="0" style="width:100%; border-collapse: collapse;">
+    <thead>
+      <tr>
+        <th>Auction</th>
+        <th>Status</th>
+        <th>Current Price</th>
+        <th>Highest Bid</th>
+        <th>Bids</th>
+        <th>End Time</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for a in auctions %}
+      <tr>
+        <td><a href="{{ url_for('view_auction', item_id=a.auction_id) }}">{{ a.title }}</a></td>
+        <td>{{ a.status }}</td>
+        <td>{{ a.current_price_display }}</td>
+        <td>{{ a.highest_bid_display }}</td>
+        <td>{{ a.bid_count }}</td>
+        <td>{{ a.end_time or '-' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p>You have not posted any auctions yet.</p>
+  {% endif %}
+</div>
+{% endblock %}

@@ -597,6 +597,29 @@ def user_menu():
         return "Internal server error", 500
 
 
+@app.route('/seller/dashboard')
+def seller_dashboard():
+    user = _user_dict_from_session()
+    if not user:
+        return redirect(url_for('user_login'))
+
+    seller_id = user.get('id') or user.get('m_id') or session.get('user_id')
+    if not seller_id:
+        flash('Unable to identify your seller account. Please login again.', 'error')
+        return redirect(url_for('user_login'))
+
+    auctions = []
+    if USE_DB:
+        try:
+            from db import get_seller_dashboard_auctions
+            auctions = get_seller_dashboard_auctions(int(seller_id), limit=100)
+        except Exception as e:
+            logger.exception('seller_dashboard failed: %s', e)
+            flash('Could not load seller dashboard right now.', 'error')
+
+    return render_template('seller_dashboard.html', auctions=auctions)
+
+
 @app.route('/user_agreement')
 def user_agreement():
     if not session.get('u_name'):

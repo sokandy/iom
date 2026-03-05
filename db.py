@@ -234,6 +234,51 @@ def get_auction(auction_id: int) -> Optional[dict]:
     }
 
 
+def get_seller_dashboard_auctions(seller_id: int, limit: int = 100) -> List[dict]:
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            """
+            SELECT a.a_id,
+                   a.a_status,
+                   a.a_e_date,
+                   a.a_s_price,
+                   a.a_c_price,
+                   i.i_title,
+                   i.i_image,
+                   COUNT(b.b_id) AS bid_count,
+                   MAX(b.b_amount) AS highest_bid
+            FROM auction a
+            JOIN item i ON i.i_id = a.a_item_id
+            LEFT JOIN bid b ON b.b_a_id = a.a_id
+            WHERE a.a_m_id = ?
+            GROUP BY a.a_id, a.a_status, a.a_e_date, a.a_s_price, a.a_c_price, i.i_title, i.i_image
+            ORDER BY COALESCE(a.updated_at, a.created_at) DESC, a.a_id DESC
+            LIMIT ?
+            """,
+            (seller_id, limit)
+        ).fetchall()
+        items = []
+        for row in rows:
+            current = float(row["a_c_price"] or row["a_s_price"] or 0)
+            highest = row["highest_bid"]
+            items.append({
+                "auction_id": row["a_id"],
+                "title": row["i_title"],
+                "image_url": row["i_image"] or url_for_static_placeholder(),
+                "status": row["a_status"] or "open",
+                "end_time": row["a_e_date"],
+                "current_price": current,
+                "current_price_display": _format_money(current),
+                "highest_bid": float(highest or 0),
+                "highest_bid_display": _format_money(highest or 0),
+                "bid_count": int(row["bid_count"] or 0),
+            })
+        return items
+    finally:
+        conn.close()
+
+
 def get_user_by_username(username: str) -> Optional[dict]:
     conn = get_connection()
     row = conn.execute("SELECT * FROM member WHERE m_login_id = ?", (username,)).fetchone()
