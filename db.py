@@ -805,6 +805,12 @@ def update_auction_housekeeping(a_id: int, action: str, params: Optional[dict] =
         if action == "close":
             cur.execute("UPDATE auction SET a_status = 'closed', a_e_date = COALESCE(a_e_date, ?), updated_at = CURRENT_TIMESTAMP WHERE a_id = ?",
                         (now, a_id))
+        elif action == "expire":
+            cur.execute(
+                "UPDATE auction SET a_status = 'closed', a_e_date = ?, updated_at = CURRENT_TIMESTAMP "
+                "WHERE a_id = ? AND (a_status IS NULL OR LOWER(a_status) = 'open')",
+                (now, a_id)
+            )
         elif action == "reopen":
             cur.execute("UPDATE auction SET a_status = 'open', a_e_date = NULL, updated_at = CURRENT_TIMESTAMP WHERE a_id = ?",
                         (a_id,))
@@ -942,6 +948,28 @@ def close_expired_auctions(now: Optional[datetime] = None) -> int:
         )
         conn.commit()
         return int(cur.rowcount or 0)
+    finally:
+        conn.close()
+
+
+def set_auction_expired(auction_id: int, now: Optional[datetime] = None) -> bool:
+    ref = now or datetime.utcnow()
+    ref_text = ref.strftime("%Y-%m-%d %H:%M:%S")
+    conn = get_connection()
+    try:
+        cur = conn.execute(
+            """
+            UPDATE auction
+            SET a_status = 'closed',
+                a_e_date = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE a_id = ?
+              AND (a_status IS NULL OR LOWER(a_status) = 'open')
+            """,
+            (ref_text, auction_id)
+        )
+        conn.commit()
+        return bool(cur.rowcount)
     finally:
         conn.close()
 

@@ -54,6 +54,27 @@ class TestCloseExpiredAuctions(unittest.TestCase):
         self.assertEqual(second, 0)
         self.assertEqual(self.db.get_auction(expired_open)["status"], "closed")
 
+    def test_set_auction_expired_closes_future_open_auction(self):
+        now = datetime.utcnow()
+        auction_id = self._create_auction(now + timedelta(days=2))
+
+        changed = self.db.set_auction_expired(auction_id, now=now)
+
+        self.assertTrue(changed)
+        auction = self.db.get_auction(auction_id)
+        self.assertEqual(auction["status"], "closed")
+
+    def test_set_auction_expired_does_not_change_cancelled(self):
+        now = datetime.utcnow()
+        auction_id = self._create_auction(now + timedelta(days=2))
+        self.db.update_auction_housekeeping(auction_id, "cancel")
+
+        changed = self.db.set_auction_expired(auction_id, now=now)
+
+        self.assertFalse(changed)
+        auction = self.db.get_auction(auction_id)
+        self.assertEqual(auction["status"], "cancelled")
+
 
 if __name__ == "__main__":
     unittest.main()

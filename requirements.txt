@@ -3,3 +3,4 @@ itsdangerous
 Werkzeug
 pytest
 gunicorn
+requests

@@ -95,6 +95,7 @@ python tools/init_sqlite_db.py --path /tmp/iom.db
 | `tools/reset_password.py` | 重設密碼 | `python tools/reset_password.py --username alice --password NewPass123!` |
 | `tools/create_item_and_auction.py` | 建立測試 item + auction | `python tools/create_item_and_auction.py` |
 | `tools/close_expired_auctions.py` | 批次關閉已過期拍賣 | `python tools/close_expired_auctions.py` |
+| `tools/set_auction_expired.py` | 將指定拍賣設為過期（closed） | `python tools/set_auction_expired.py 1` |
 | `tools/send_auction_result_notifications.py` | 發送已結拍賣結果通知（得標 / 流標） | `python tools/send_auction_result_notifications.py` |
 | `tools/backup_db.py` | 備份 SQLite DB（時間戳檔名） | `python tools/backup_db.py --source ./iom.db --output-dir ./tools/backups` |
 | `tools/restore_db.py` | 還原 SQLite DB（可 `--force` 覆寫） | `python tools/restore_db.py ./tools/backups/iom_backup_xxx.db --target ./iom.db --force` |
