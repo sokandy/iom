@@ -822,6 +822,21 @@ def _resolve_member_id(identifier):
     return None
 
 
+def _current_member_id():
+    user = _user_dict_from_session()
+    if user:
+        uid = user.get('id') or user.get('m_id')
+        if uid:
+            return int(uid)
+    sess_uid = session.get('user_id')
+    if sess_uid:
+        try:
+            return int(sess_uid)
+        except Exception:
+            return None
+    return None
+
+
 @app.route('/admin/resend', methods=['GET', 'POST'])
 def admin_resend():
     user = _require_admin()
@@ -1114,6 +1129,49 @@ def admin_audit():
     return '\n'.join(html)
 
 
+@app.route('/watchlist')
+def watchlist():
+    if not session.get('u_name'):
+        return redirect(url_for('user_login'))
+    member_id = _current_member_id()
+    if not member_id:
+        return redirect(url_for('user_login'))
+    if not USE_DB:
+        return render_template('auction_browse.html', items=[])
+    try:
+        from db import get_watchlist_auctions
+        items = get_watchlist_auctions(member_id, limit=200) or []
+    except Exception as e:
+        logger.warning('watchlist route failed: %s', e)
+        items = []
+    return render_template('auction_browse.html', items=items)
+
+
+@app.route('/auction/<int:auction_id>/watch', methods=['POST'])
+def watchlist_toggle(auction_id):
+    if not session.get('u_name'):
+        return redirect(url_for('user_login'))
+    member_id = _current_member_id()
+    if not member_id:
+        return redirect(url_for('user_login'))
+    action = (request.form.get('action') or 'add').strip().lower()
+    if not USE_DB:
+        flash('Watchlist is unavailable in non-DB mode.', 'error')
+        return redirect(url_for('view_auction', item_id=auction_id))
+    try:
+        from db import add_watchlist, remove_watchlist
+        if action == 'remove':
+            changed = remove_watchlist(member_id, auction_id)
+            flash('Removed from watchlist.' if changed else 'Item was not in watchlist.', 'success')
+        else:
+            changed = add_watchlist(member_id, auction_id)
+            flash('Added to watchlist.' if changed else 'Item already in watchlist.', 'success')
+    except Exception as e:
+        logger.warning('watchlist toggle failed: %s', e)
+        flash('Failed to update watchlist.', 'error')
+    return redirect(url_for('view_auction', item_id=auction_id))
+
+
 @app.route('/auction/<int:item_id>')
 @app.route('/auctions/<int:item_id>')
 def view_auction(item_id):
@@ -1154,7 +1212,15 @@ def view_auction(item_id):
             images = get_item_images(item_id) or []
         except Exception:
             images = []
-        return render_template('item.html', item=item, highest_bid=highest_bid, images=images)
+        watchlisted = False
+        try:
+            member_id = _current_member_id()
+            if member_id:
+                from db import is_watchlisted
+                watchlisted = is_watchlisted(member_id, item_id)
+        except Exception:
+            watchlisted = False
+        return render_template('item.html', item=item, highest_bid=highest_bid, images=images, watchlisted=watchlisted)
     except Exception as e:
         logger.exception(f"Error in /auction/<item_id>: {e}")
         if app.debug:

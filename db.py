@@ -64,6 +64,16 @@ CREATE TABLE IF NOT EXISTS bid (
     FOREIGN KEY(b_m_id) REFERENCES member(m_id)
 );
 
+CREATE TABLE IF NOT EXISTS watchlist (
+    w_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    w_m_id INTEGER NOT NULL,
+    w_a_id INTEGER NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(w_m_id, w_a_id),
+    FOREIGN KEY(w_m_id) REFERENCES member(m_id) ON DELETE CASCADE,
+    FOREIGN KEY(w_a_id) REFERENCES auction(a_id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS item_image (
     img_id INTEGER PRIMARY KEY AUTOINCREMENT,
     item_id INTEGER NOT NULL,
@@ -752,6 +762,92 @@ def get_item_images(item_id: int) -> List[dict]:
             "thumb_url": thumb_url,
             "sort_order": row["sort_order"],
             "variants": variants,
+        })
+    return results
+
+
+def add_watchlist(member_id: int, auction_id: int) -> bool:
+    conn = get_connection()
+    try:
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO watchlist(w_m_id, w_a_id) VALUES (?, ?)",
+            (member_id, auction_id)
+        )
+        conn.commit()
+        return bool(cur.rowcount)
+    finally:
+        conn.close()
+
+
+def remove_watchlist(member_id: int, auction_id: int) -> bool:
+    conn = get_connection()
+    try:
+        cur = conn.execute(
+            "DELETE FROM watchlist WHERE w_m_id = ? AND w_a_id = ?",
+            (member_id, auction_id)
+        )
+        conn.commit()
+        return bool(cur.rowcount)
+    finally:
+        conn.close()
+
+
+def is_watchlisted(member_id: int, auction_id: int) -> bool:
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM watchlist WHERE w_m_id = ? AND w_a_id = ? LIMIT 1",
+            (member_id, auction_id)
+        ).fetchone()
+        return bool(row)
+    finally:
+        conn.close()
+
+
+def get_watchlist_auctions(member_id: int, limit: int = 100) -> List[dict]:
+    conn = get_connection()
+    rows = conn.execute(
+        """
+        SELECT a.a_id,
+               a.a_item_id,
+               a.a_c_price,
+               a.a_s_price,
+               a.a_status,
+               a.a_s_date,
+               a.a_e_date,
+               i.i_title,
+               i.i_desc,
+               i.i_image,
+               i.i_m_id
+        FROM watchlist w
+        JOIN auction a ON a.a_id = w.w_a_id
+        JOIN item i ON i.i_id = a.a_item_id
+        WHERE w.w_m_id = ?
+        ORDER BY w.created_at DESC
+        LIMIT ?
+        """,
+        (member_id, limit)
+    ).fetchall()
+    conn.close()
+
+    results = []
+    for row in rows:
+        data = _row_to_dict(row)
+        price = data.get("a_c_price") or data.get("a_s_price")
+        image = data.get("i_image") or url_for_static_placeholder()
+        results.append({
+            "id": data.get("a_id"),
+            "item_id": data.get("a_item_id"),
+            "title": data.get("i_title"),
+            "description": data.get("i_desc"),
+            "image_url": image,
+            "current_bid": _format_money(price),
+            "seller_id": data.get("i_m_id"),
+            "start_date": data.get("a_s_date"),
+            "end_time": data.get("a_e_date"),
+            "duration": _compute_duration(data.get("a_s_date"), data.get("a_e_date")),
+            "url": f"/auction/{data.get('a_id')}",
+            "status": data.get("a_status", "open"),
         })
     return results
 
