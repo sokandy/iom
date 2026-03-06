@@ -1429,6 +1429,7 @@ def validate_form_data(form):
     category = (form.get('category') or '').strip()
     sub_category = (form.get('sub_category') or '').strip()
     starting_price = form.get('starting_price') or form.get('price') or 0
+    reserve_price = form.get('reserve_price')
     duration_raw = form.get('duration') or '0'
 
     try:
@@ -1443,7 +1444,16 @@ def validate_form_data(form):
     except Exception:
         duration_days = 0
 
-    return title, desc, category, sub_category, starting_price, duration_days
+    reserve = None
+    if reserve_price not in (None, ''):
+        try:
+            reserve = float(reserve_price)
+            if reserve < 0:
+                reserve = 0.0
+        except Exception:
+            reserve = None
+
+    return title, desc, category, sub_category, starting_price, duration_days, reserve
 
 
 def authenticate_user():
@@ -1476,7 +1486,7 @@ def validate_uploaded_images(files):
     return valid_images
 
 
-def create_auction_in_db(title, desc, seller_id, starting_price, end_date, category, sub_category):
+def create_auction_in_db(title, desc, seller_id, starting_price, end_date, category, sub_category, reserve_price):
     """Insert item and auction into the database."""
     from db import create_item_and_auction
 
@@ -1484,7 +1494,11 @@ def create_auction_in_db(title, desc, seller_id, starting_price, end_date, categ
         result = create_item_and_auction(
             title, desc, seller_id=seller_id, starting_price=starting_price,
             end_date=end_date, category=parse_int_field(category, 'category'),
-            sub_category=parse_int_field(sub_category, 'sub_category')
+            sub_category=parse_int_field(sub_category, 'sub_category'),
+            reserve_price=reserve_price,
+            anti_snipe_minutes=int(os.getenv('ANTI_SNIPE_WINDOW_MINUTES', '5')),
+            anti_snipe_extend_minutes=int(os.getenv('ANTI_SNIPE_EXTEND_MINUTES', '5')),
+            anti_snipe_max_extend=int(os.getenv('ANTI_SNIPE_MAX_EXTENDS', '3')),
         )
         if not result:
             flash('Failed to create item/auction (database error).', 'error')
@@ -1534,7 +1548,7 @@ def new_auction():
     categories = [("1", "Antiques"), ("2", "Electronics"), ("3", "Books")]
 
     if request.method == 'POST':
-        title, desc, category, sub_category, starting_price, duration_days = validate_form_data(request.form)
+        title, desc, category, sub_category, starting_price, duration_days, reserve_price = validate_form_data(request.form)
 
         if not title:
             flash('Title is required to post an item.', 'error')
@@ -1550,7 +1564,9 @@ def new_auction():
 
         end_date = datetime.utcnow() + timedelta(days=duration_days) if duration_days > 0 else None
 
-        result, error_response = create_auction_in_db(title, desc, seller_id, starting_price, end_date, category, sub_category)
+        result, error_response = create_auction_in_db(
+            title, desc, seller_id, starting_price, end_date, category, sub_category, reserve_price
+        )
         if error_response:
             return error_response
 

@@ -64,6 +64,7 @@ python app.py
 | `HOST` | `app.py` 本地啟動 host（預設 `127.0.0.1`） |
 | `CURRENCY_SYMBOL` / `CURRENCY_LABEL` | 畫面貨幣顯示 |
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` | 註冊確認 email SMTP 設定 |
+| `ANTI_SNIPE_WINDOW_MINUTES` / `ANTI_SNIPE_EXTEND_MINUTES` / `ANTI_SNIPE_MAX_EXTENDS` | 自動延長拍賣設定（預設 5/5/3） |
 | `LOGIN_MAX_FAILED` / `LOGIN_LOCKOUT_SECONDS` | 登入失敗鎖定次數與秒數（預設 5 次 / 300 秒） |
 
 ## 5. 資料庫初始化與重置

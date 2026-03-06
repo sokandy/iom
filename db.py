@@ -47,6 +47,11 @@ CREATE TABLE IF NOT EXISTS auction (
     a_c_price REAL NOT NULL DEFAULT 0,
     a_s_date TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     a_e_date TIMESTAMP,
+    a_reserve_price REAL,
+    a_anti_snipe_minutes INTEGER NOT NULL DEFAULT 5,
+    a_anti_snipe_extend_minutes INTEGER NOT NULL DEFAULT 5,
+    a_anti_snipe_max_extend INTEGER NOT NULL DEFAULT 3,
+    a_anti_snipe_extend_count INTEGER NOT NULL DEFAULT 0,
     a_status TEXT NOT NULL DEFAULT 'open',
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -123,6 +128,18 @@ _DEFAULT_CATEGORIES = [
 
 def _ensure_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(_SCHEMA_SQL)
+    auction_cols = {row[1] for row in conn.execute("PRAGMA table_info(auction)").fetchall()}
+    if "a_reserve_price" not in auction_cols:
+        conn.execute("ALTER TABLE auction ADD COLUMN a_reserve_price REAL")
+    if "a_anti_snipe_minutes" not in auction_cols:
+        conn.execute("ALTER TABLE auction ADD COLUMN a_anti_snipe_minutes INTEGER NOT NULL DEFAULT 5")
+    if "a_anti_snipe_extend_minutes" not in auction_cols:
+        conn.execute("ALTER TABLE auction ADD COLUMN a_anti_snipe_extend_minutes INTEGER NOT NULL DEFAULT 5")
+    if "a_anti_snipe_max_extend" not in auction_cols:
+        conn.execute("ALTER TABLE auction ADD COLUMN a_anti_snipe_max_extend INTEGER NOT NULL DEFAULT 3")
+    if "a_anti_snipe_extend_count" not in auction_cols:
+        conn.execute("ALTER TABLE auction ADD COLUMN a_anti_snipe_extend_count INTEGER NOT NULL DEFAULT 0")
+    conn.commit()
     count = conn.execute("SELECT COUNT(*) FROM category").fetchone()[0]
     if count == 0:
         conn.executemany("INSERT INTO category(name) VALUES (?)", [(c,) for c in _DEFAULT_CATEGORIES])
@@ -183,6 +200,7 @@ def get_auctions(limit: Optional[int] = 50,
                    a.a_item_id,
                    a.a_c_price,
                    a.a_s_price,
+                   a.a_reserve_price,
                    a.a_status,
                    a.a_s_date,
                    a.a_e_date,
@@ -230,7 +248,6 @@ def get_auctions(limit: Optional[int] = 50,
         rows = conn.execute(sql, tuple(params)).fetchall()
     finally:
         conn.close()
-
     results = []
     for row in rows:
         data = _row_to_dict(row)
@@ -248,6 +265,7 @@ def get_auctions(limit: Optional[int] = 50,
             "sub_category": data.get("i_s_cat"),
             "start_date": data.get("a_s_date"),
             "end_time": data.get("a_e_date"),
+            "reserve_price": _format_money(data.get("a_reserve_price")),
             "duration": _compute_duration(data.get("a_s_date"), data.get("a_e_date")),
             "url": f"/auction/{data.get('a_id')}",
             "status": data.get("a_status", "open"),
@@ -280,6 +298,12 @@ def get_auction(auction_id: int) -> Optional[dict]:
         "seller_id": data.get("i_m_id"),
         "start_date": data.get("a_s_date"),
         "end_time": data.get("a_e_date"),
+        "reserve_price": _format_money(data.get("a_reserve_price")),
+        "reserve_price_raw": data.get("a_reserve_price"),
+        "anti_snipe_minutes": data.get("a_anti_snipe_minutes"),
+        "anti_snipe_extend_minutes": data.get("a_anti_snipe_extend_minutes"),
+        "anti_snipe_max_extend": data.get("a_anti_snipe_max_extend"),
+        "anti_snipe_extend_count": data.get("a_anti_snipe_extend_count"),
         "duration": _compute_duration(data.get("a_s_date"), data.get("a_e_date")),
         "url": f"/auction/{data.get('a_id')}",
         "status": data.get("a_status", "open"),
@@ -574,7 +598,17 @@ def place_bid(auction_id: int, bidder_m_id: int, amount) -> bool:
     conn = get_connection()
     try:
         row = conn.execute(
-            "SELECT a_status, a_e_date, COALESCE(a_c_price, a_s_price) AS current_price FROM auction WHERE a_id = ?",
+            """
+            SELECT a_status,
+                   a_e_date,
+                   COALESCE(a_c_price, a_s_price) AS current_price,
+                   a_anti_snipe_minutes,
+                   a_anti_snipe_extend_minutes,
+                   a_anti_snipe_max_extend,
+                   a_anti_snipe_extend_count
+            FROM auction
+            WHERE a_id = ?
+            """,
             (auction_id,)
         ).fetchone()
         if not row:
@@ -593,10 +627,39 @@ def place_bid(auction_id: int, bidder_m_id: int, amount) -> bool:
         if bid_amount <= current_price:
             return False
         conn.execute("INSERT INTO bid(b_a_id, b_m_id, b_amount) VALUES (?, ?, ?)", (auction_id, bidder_m_id, bid_amount))
-        conn.execute(
-            "UPDATE auction SET a_c_price = ?, updated_at = CURRENT_TIMESTAMP WHERE a_id = ?",
-            (bid_amount, auction_id)
-        )
+        anti_minutes = int(row["a_anti_snipe_minutes"] or 0)
+        extend_minutes = int(row["a_anti_snipe_extend_minutes"] or 0)
+        max_extend = int(row["a_anti_snipe_max_extend"] or 0)
+        extend_count = int(row["a_anti_snipe_extend_count"] or 0)
+        should_extend = False
+        new_end_dt = None
+        if end_date and anti_minutes > 0 and extend_minutes > 0 and extend_count < max_extend:
+            try:
+                end_dt = datetime.fromisoformat(end_date) if isinstance(end_date, str) else end_date
+                remaining_seconds = (end_dt - datetime.utcnow()).total_seconds()
+                if remaining_seconds <= anti_minutes * 60:
+                    should_extend = True
+                    new_end_dt = end_dt + timedelta(minutes=extend_minutes)
+            except Exception:
+                should_extend = False
+
+        if should_extend and new_end_dt is not None:
+            conn.execute(
+                """
+                UPDATE auction
+                SET a_c_price = ?,
+                    a_e_date = ?,
+                    a_anti_snipe_extend_count = COALESCE(a_anti_snipe_extend_count, 0) + 1,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE a_id = ?
+                """,
+                (bid_amount, new_end_dt, auction_id)
+            )
+        else:
+            conn.execute(
+                "UPDATE auction SET a_c_price = ?, updated_at = CURRENT_TIMESTAMP WHERE a_id = ?",
+                (bid_amount, auction_id)
+            )
         conn.commit()
         return True
     finally:
@@ -654,11 +717,23 @@ def create_item(title: str, description: Optional[str] = None, owner_id: Optiona
 
 
 def create_auction(item_id: int, seller_id: Optional[int] = None, starting_price: float = 0.0,
-                   start_date: Optional[datetime] = None, end_date: Optional[datetime] = None) -> int:
+                   start_date: Optional[datetime] = None, end_date: Optional[datetime] = None,
+                   reserve_price: Optional[float] = None,
+                   anti_snipe_minutes: int = 5,
+                   anti_snipe_extend_minutes: int = 5,
+                   anti_snipe_max_extend: int = 3) -> int:
     conn = get_connection()
     cur = conn.execute(
-        "INSERT INTO auction(a_item_id, a_m_id, a_s_price, a_c_price, a_s_date, a_e_date) VALUES (?, ?, ?, ?, ?, ?)",
-        (item_id, seller_id, starting_price, starting_price, start_date or datetime.utcnow(), end_date)
+        """
+        INSERT INTO auction(
+            a_item_id, a_m_id, a_s_price, a_c_price, a_s_date, a_e_date,
+            a_reserve_price, a_anti_snipe_minutes, a_anti_snipe_extend_minutes, a_anti_snipe_max_extend
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            item_id, seller_id, starting_price, starting_price, start_date or datetime.utcnow(), end_date,
+            reserve_price, anti_snipe_minutes, anti_snipe_extend_minutes, anti_snipe_max_extend,
+        )
     )
     conn.commit()
     auction_id = cur.lastrowid
@@ -671,6 +746,10 @@ def create_item_and_auction(title: str, description: Optional[str], seller_id: O
                              duration: int = 7, status: str = 'P',
                              category: Optional[int] = None,
                              sub_category: Optional[int] = None,
+                             reserve_price: Optional[float] = None,
+                             anti_snipe_minutes: int = 5,
+                             anti_snipe_extend_minutes: int = 5,
+                             anti_snipe_max_extend: int = 3,
                              **kwargs) -> Tuple[int, int]:
     conn = get_connection()
     try:
@@ -693,8 +772,16 @@ def create_item_and_auction(title: str, description: Optional[str], seller_id: O
         )
         item_id = cur.lastrowid
         cur.execute(
-            "INSERT INTO auction(a_item_id, a_m_id, a_s_price, a_c_price, a_s_date, a_e_date) VALUES (?, ?, ?, ?, ?, ?)",
-            (item_id, seller_id, starting_price, starting_price, datetime.utcnow(), end_date)
+            """
+            INSERT INTO auction(
+                a_item_id, a_m_id, a_s_price, a_c_price, a_s_date, a_e_date,
+                a_reserve_price, a_anti_snipe_minutes, a_anti_snipe_extend_minutes, a_anti_snipe_max_extend
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                item_id, seller_id, starting_price, starting_price, datetime.utcnow(), end_date,
+                reserve_price, anti_snipe_minutes, anti_snipe_extend_minutes, anti_snipe_max_extend,
+            )
         )
         auction_id = cur.lastrowid
         conn.commit()
@@ -951,6 +1038,7 @@ def list_closed_auctions_for_result_notifications(limit: int = 200) -> List[dict
                    a.a_e_date,
                    a.a_c_price,
                    a.a_s_price,
+                     a.a_reserve_price,
                    i.i_title,
                    a.a_m_id AS seller_id,
                    m.m_email AS seller_email
@@ -970,6 +1058,7 @@ def list_closed_auctions_for_result_notifications(limit: int = 200) -> List[dict
                 "status": row["a_status"],
                 "end_time": row["a_e_date"],
                 "current_price": float(row["a_c_price"] or row["a_s_price"] or 0),
+                "reserve_price": float(row["a_reserve_price"] or 0) if row["a_reserve_price"] is not None else None,
                 "title": row["i_title"],
                 "seller_id": row["seller_id"],
                 "seller_email": row["seller_email"],
