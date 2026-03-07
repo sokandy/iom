@@ -1178,35 +1178,21 @@ def view_auction(item_id):
     if not (USE_DB and get_auction):
         abort(404)
     try:
-        from db import get_connection, get_item_images
+        from db import get_item_images, get_auction_highest_bidder
         item = get_auction(item_id)
         if not item:
             abort(404)
         # Try to fetch highest bid for display
         highest_bid = None
         try:
-            conn = get_connection()
-            cur = conn.cursor()
-            try:
-                cur.execute("SELECT TOP 1 b_amount AS a_s_price, b_m_id FROM dbo.bid WHERE b_a_id = ? ORDER BY b_amount DESC", (item_id,))
-                row = cur.fetchone()
-                if row:
-                    highest_bid = {'a_s_price': getattr(row, 'a_s_price', None) or (row[0] if len(row) > 0 else None),
-                                   'a_m_id': getattr(row, 'b_m_id', None) or (row[1] if len(row) > 1 else None)}
-            except Exception:
-                try:
-                    cur.execute("SELECT TOP 1 amount AS a_s_price, member_id FROM dbo.bid WHERE auction_id = ? ORDER BY amount DESC", (item_id,))
-                    row = cur.fetchone()
-                    if row:
-                        highest_bid = {'a_s_price': getattr(row, 'a_s_price', None) or (row[0] if len(row) > 0 else None),
-                                       'a_m_id': getattr(row, 'member_id', None) or (row[1] if len(row) > 1 else None)}
-                except Exception:
-                    highest_bid = None
-        finally:
-            try:
-                conn.close()
-            except Exception:
-                pass
+            hb = get_auction_highest_bidder(item_id)
+            if hb:
+                highest_bid = {
+                    'a_s_price': hb.get('amount'),
+                    'a_m_id': hb.get('member_id'),
+                }
+        except Exception:
+            highest_bid = None
         # Fetch image list for gallery if available
         try:
             images = get_item_images(item_id) or []
@@ -1220,7 +1206,34 @@ def view_auction(item_id):
                 watchlisted = is_watchlisted(member_id, item_id)
         except Exception:
             watchlisted = False
-        return render_template('item.html', item=item, highest_bid=highest_bid, images=images, watchlisted=watchlisted)
+
+        time_left_text = None
+        try:
+            status = str(item.get('status') or '').lower()
+            end_value = item.get('end_time')
+            end_dt = datetime.fromisoformat(end_value) if isinstance(end_value, str) and end_value else end_value
+            if status in ('closed', 'cancelled'):
+                time_left_text = '已結束'
+            elif end_dt:
+                remaining_seconds = int((end_dt - datetime.utcnow()).total_seconds())
+                if remaining_seconds <= 0:
+                    time_left_text = '已到結拍時間'
+                else:
+                    remaining_days = remaining_seconds // 86400
+                    remaining_seconds_after_days = remaining_seconds % 86400
+                    remaining_minutes = max(1, (remaining_seconds_after_days + 59) // 60)
+                    time_left_text = f'仲有 {remaining_days} 日 {remaining_minutes} 分鐘'
+        except Exception:
+            time_left_text = None
+
+        return render_template(
+            'item.html',
+            item=item,
+            highest_bid=highest_bid,
+            images=images,
+            watchlisted=watchlisted,
+            time_left_text=time_left_text,
+        )
     except Exception as e:
         logger.exception(f"Error in /auction/<item_id>: {e}")
         if app.debug:
@@ -1468,7 +1481,10 @@ def authenticate_user():
 
 
 def validate_uploaded_images(files):
-    """Validate and process uploaded images."""
+    """Validate and process uploaded images.
+
+    Returns a list of valid uploaded image files. Empty list means no images uploaded.
+    """
     allowed_ext = ('.jpg', '.jpeg', '.png', '.gif', '.webp')
     valid_images = []
 
@@ -1479,21 +1495,18 @@ def validate_uploaded_images(files):
         if filename and any(filename.lower().endswith(ext) for ext in allowed_ext):
             valid_images.append(f)
 
-    if not valid_images:
-        flash('Please upload at least one image for the item.', 'error')
-        return None
-
     return valid_images
 
 
-def create_auction_in_db(title, desc, seller_id, starting_price, end_date, category, sub_category, reserve_price):
+def create_auction_in_db(title, desc, seller_id, starting_price, end_date, duration_days, category, sub_category, reserve_price):
     """Insert item and auction into the database."""
     from db import create_item_and_auction
 
     try:
         result = create_item_and_auction(
             title, desc, seller_id=seller_id, starting_price=starting_price,
-            end_date=end_date, category=parse_int_field(category, 'category'),
+            end_date=end_date, duration=duration_days,
+            category=parse_int_field(category, 'category'),
             sub_category=parse_int_field(sub_category, 'sub_category'),
             reserve_price=reserve_price,
             anti_snipe_minutes=int(os.getenv('ANTI_SNIPE_WINDOW_MINUTES', '5')),
@@ -1516,6 +1529,11 @@ def save_uploaded_images(valid_images, item_id):
     from db import add_item_image, set_item_image
     upload_dir = os.path.join(app.static_folder or 'static', 'uploads')
     os.makedirs(upload_dir, exist_ok=True)
+
+    if not valid_images:
+        if set_item_image:
+            set_item_image(item_id, '/static/placeholder.png')
+        return '/static/placeholder.png'
 
     saved_image_path = None
     for idx, f in enumerate(valid_images, start=1):
@@ -1559,13 +1577,11 @@ def new_auction():
             return redirect_response
 
         valid_images = validate_uploaded_images(request.files.getlist('images'))
-        if not valid_images:
-            return render_template('post_items_for_sale.html', title=title, desc=desc, categories=categories)
 
         end_date = datetime.utcnow() + timedelta(days=duration_days) if duration_days > 0 else None
 
         result, error_response = create_auction_in_db(
-            title, desc, seller_id, starting_price, end_date, category, sub_category, reserve_price
+            title, desc, seller_id, starting_price, end_date, duration_days, category, sub_category, reserve_price
         )
         if error_response:
             return error_response

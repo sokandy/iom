@@ -1,0 +1,155 @@
+Issue 1 — P0：拍賣自動結拍 Job（12-16h）
+AC：到 end_time 會自動由 active 轉 closed；重跑 job 唔會重複結算；無人出價時標記流標。
+技術步驟：加 close_expired_auctions() service → 寫 CLI/排程入口（cron 每分鐘）→ DB transaction 鎖定單場拍賣 → 寫單元+整合測試（時間邊界、重入）。
+
+Issue 2 — P0：被超價通知 Email（8-10h）
+AC：新高價出現後，上一手最高價者只收 1 封通知；同一輪唔重複 spam；SMTP 未配置時有 log fallback。
+技術步驟：在 bid 成功流程觸發通知事件 → 做去重 key（auction_id + user_id + bid_id）→ 接入現有 email sender → 測試通知觸發與去重。
+
+Issue 3 — P0：得標/流標通知 Email（6-8h）
+AC：結拍後最高出價者收到得標信；賣家收到結果信；流標時賣家收到流標信。
+技術步驟：在結拍 service 內發送結果事件 → 建立 2-3 個 template（winner/seller/no-sale）→ 補測試（有人出價、無人出價）。
+
+Issue 4 — P0：登入 Rate Limit（6-8h）
+AC：同 IP 或帳號短時間連續失敗會被暫停；正常登入可解除計數；回應訊息不洩漏帳號存在與否。
+技術步驟：新增 login_attempt 儲存（或記憶體+持久化）→ 在 login route 前置檢查 → 成功登入重置 counter → 測試暴力登入情境。
+
+Issue 5 — P0：管理員操作 Audit Log（4-6h）
+AC：刪拍賣/授權 admin/重設密碼等行為有操作者、時間、目標 ID、結果；可查最近 100 筆。
+技術步驟：加 audit_log 表 → 在關鍵 admin action 寫入 log → 後台加簡單查詢頁/列表 API → 測試 log 完整性。
+
+Issue 6 — P0：備份與還原流程（6-8h）
+AC：可一鍵備份 DB；可在 staging 還原並成功啟動；README 有 SOP。
+技術步驟：加 tools/backup_db.py、tools/restore_db.py → 增加時間戳命名與校驗 → 寫一次還原演練紀錄。
+
+Issue 7 — P1：Watchlist 收藏 + 快完提醒（8-12h）
+AC：會員可收藏/取消收藏；「我的收藏」可見；拍賣剩 1 小時內寄提醒（可關閉）。
+技術步驟：新增 watchlist 表 → item 頁加收藏按鈕 → 排程掃描即將結束且未提醒紀錄 → 測試收藏與提醒去重。
+
+Issue 8 — P1：Anti-sniping 自動延長（8-10h）
+AC：結束前 N 分鐘有新出價就延長 M 分鐘；可重複延長但有上限；前端倒數即時顯示更新後時間。
+技術步驟：bid 寫入時判斷剩餘時間 → 更新 end_time + 記錄延長次數 → 前端讀最新 end_time → 測試邊界時間。
+
+Issue 9 — P1：Reserve Price 保留價（4-6h）
+AC：賣家可設定保留價；未達保留價即使最高價都不成交；結拍頁顯示「未達保留價」。
+技術步驟：auction schema 加 reserve_price → post/sell 表單與驗證 → 結拍判斷邏輯更新 → 測試達標/未達標兩路徑。
+
+Issue 10 — P1：賣家 Dashboard v1（10-14h）
+AC：賣家可見每件商品瀏覽數、出價數、目前最高價、狀態；可按 active/closed 篩選。
+技術步驟：整理查詢 SQL（聚合 item + auction + bid）→ 新增 seller dashboard route/template → 加分頁與排序 → 測試查詢效能。
+
+Issue 11 — P1：搜尋篩選增強（8-12h）
+AC：可用價格區間、ending soon、最高出價排序；條件可組合；查詢錯誤不 500。
+技術步驟：search query builder 重構 → whitelist 參數驗證 → DB index 補強（end_time/current_price）→ 測試多條件組合。
+
+Issue 12 — P2：SEO 基礎包（8-10h）
+AC：有 sitemap.xml、item 頁 OG tags、基本 structured data；Search Console 可成功讀取 sitemap。
+技術步驟：新增 sitemap route → base/item template 注入 meta/OG/JSON-LD → 驗證主要頁面輸出。
+
+建議開工順序
+
+週 1：Issue 1,2
+週 2：Issue 3,4,5,6
+週 3：Issue 7,8,9
+週 4：Issue 10,11（有餘力再做 12）
+要嘅話我可以下一步直接幫你生成 GitHub issue 內容模板（title、body、labels、milestone）俾你逐條貼上去。
+
+
+Terminal 1: 啟動 app
+cd /Users/mayfair-mac/project/iom-website/iom
+source .venv/bin/activate
+
+export USE_DB=1
+export SQLITE_PATH="$PWD/iom.e2e.db"
+
+python tools/init_sqlite_db.py --reset --path "$SQLITE_PATH"
+python app.py
+
+Terminal 2: 跑 E2E 流程
+cd /Users/mayfair-mac/project/iom-website/iom
+source .venv/bin/activate
+
+export USE_DB=1
+export SQLITE_PATH="$PWD/iom.e2e.db"
+BASE="http://127.0.0.1:5000"
+
+SELLER_COOKIE="/tmp/iom_seller.cookie"
+BIDDER_COOKIE="/tmp/iom_bidder.cookie"
+rm -f "$SELLER_COOKIE" "$BIDDER_COOKIE"
+
+新註冊賣家（seller1）
+curl -s -c "$SELLER_COOKIE" -b "$SELLER_COOKIE" \
+  -X POST "$BASE/register" \
+  -d 'username=seller1' \
+  -d 'password=Abcde123!' \
+  -d 'confirm=Abcde123!' 
+
+  賣家登入
+  curl -s -c "$SELLER_COOKIE" -b "$SELLER_COOKIE" \
+  -X POST "$BASE/user_login" \
+  -d 'username=seller1' \
+  -d 'password=Abcde123!'
+
+  賣家建立拍賣
+  AID=$(curl -s -i -c "$SELLER_COOKIE" -b "$SELLER_COOKIE" \
+  -F "title=E2E Auction Item" \
+  -F "desc=End-to-end flow test" \
+  -F "category=1" \
+  -F "sub_category=1" \
+  -F "starting_price=10" \
+  -F "duration=2" \
+  -F "images=@static/placeholder.png;type=image/png" \
+  "$BASE/auctions/new" | awk -F'/auctions/' '/^Location: /{print $2}' | tr -d '\r'); [ -n "$AID" ] || AID=$(.venv/bin/python -c "import sqlite3; c=sqlite3.connect('iom.e2e.db'); r=c.execute('select a_id from auction order by a_id desc limit 1').fetchone(); print(r[0] if r else ''); c.close()"); echo "New Auction ID: $AID"
+
+  取最新拍賣 ID
+  AID=$(.venv/bin/python - <<'PY'
+import db
+rows = db.get_auctions(limit=1)
+print(rows[0]['id'])
+PY
+)
+echo "Auction ID: $AID"
+
+  新註冊買家（bidder1）+ 登入
+  curl -s -c "$BIDDER_COOKIE" -b "$BIDDER_COOKIE" \
+  -X POST "$BASE/register" \
+  -d 'username=bidder1' \
+  -d 'password=Abcde123!' \
+  -d 'confirm=Abcde123!'
+
+curl -s -c "$BIDDER_COOKIE" -b "$BIDDER_COOKIE" \
+  -X POST "$BASE/user_login" \
+  -d 'username=bidder1' \
+  -d 'password=Abcde123!'
+
+  買家出價
+  curl -i -s -c "$BIDDER_COOKIE" -b "$BIDDER_COOKIE" \
+  -X POST "$BASE/auction/$AID/bid" \
+  -d "amount=20"
+
+  檢查結拍前狀態
+  .venv/bin/python - <<PY
+import db
+a = db.get_auction(int("$AID"))
+print("before_close:", a["status"], a["end_time"], a["current_bid"])
+PY
+
+模擬時間前進，跑「自動結拍 job」
+AT=$(.venv/bin/python - <<'PY'
+from datetime import datetime, timedelta
+print((datetime.utcnow() + timedelta(days=2)).isoformat())
+PY
+)
+
+.venv/bin/python tools/close_expired_auctions.py --at "$AT"
+
+檢查結拍後狀態
+.venv/bin/python - <<PY
+import db
+a = db.get_auction(int("$AID"))
+print("after_close:", a["status"], a["end_time"], a["current_bid"])
+PY
+
+（可選）觸發結拍結果通知腳本
+.venv/bin/python tools/send_auction_result_notifications.py --limit 20
+tail -n 30 auth.log

@@ -276,7 +276,7 @@ def get_auctions(limit: Optional[int] = 50,
 def get_auction(auction_id: int) -> Optional[dict]:
     conn = get_connection()
     sql = """
-        SELECT a.*, i.i_title, i.i_desc, i.i_image, i.i_m_id
+        SELECT a.*, i.i_title, i.i_desc, i.i_image, i.i_m_id, i.i_duration
         FROM auction a
         JOIN item i ON i.i_id = a.a_item_id
         WHERE a.a_id = ?
@@ -304,7 +304,7 @@ def get_auction(auction_id: int) -> Optional[dict]:
         "anti_snipe_extend_minutes": data.get("a_anti_snipe_extend_minutes"),
         "anti_snipe_max_extend": data.get("a_anti_snipe_max_extend"),
         "anti_snipe_extend_count": data.get("a_anti_snipe_extend_count"),
-        "duration": _compute_duration(data.get("a_s_date"), data.get("a_e_date")),
+        "duration": int(data.get("i_duration")) if data.get("i_duration") is not None else _compute_duration(data.get("a_s_date"), data.get("a_e_date")),
         "url": f"/auction/{data.get('a_id')}",
         "status": data.get("a_status", "open"),
     }

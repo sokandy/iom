@@ -1190,3 +1190,53 @@ TypeError: create_member() takes from 2 to 4 positional arguments but 5 were giv
 2026-02-22 17:20:26,385 INFO Failed login 1 for jennifer
 2026-02-22 17:20:29,635 INFO Successful login for jennifer
 2026-02-22 17:21:02,207 INFO Successful login for admin
+2026-03-07 17:22:39,507 INFO Email (no SMTP configured) to test-recipient@example.com: SMTP smoke test | hello from iom
+2026-03-07 17:34:21,108 INFO Failed login 1 for ip:198.51.100.99
+2026-03-07 17:34:21,108 INFO Failed login 1 for user:alice
+2026-03-07 17:34:21,116 INFO Successful login for alice from 198.51.100.99
+2026-03-07 17:34:21,117 INFO Failed login 1 for ip:203.0.113.10
+2026-03-07 17:34:21,117 INFO Failed login 1 for user:ghost
+2026-03-07 17:34:21,118 INFO Failed login 2 for ip:203.0.113.10
+2026-03-07 17:34:21,118 INFO Failed login 2 for user:ghost
+2026-03-07 17:34:21,118 INFO Failed login 3 for ip:203.0.113.10
+2026-03-07 17:34:21,118 INFO Failed login 3 for user:ghost
+2026-03-07 17:34:21,119 INFO Failed login 4 for ip:203.0.113.10
+2026-03-07 17:34:21,119 INFO Failed login 4 for user:ghost
+2026-03-07 17:34:21,120 WARNING Login lockout: ip:203.0.113.10
+2026-03-07 17:34:21,120 WARNING Login lockout: user:ghost
+2026-03-07 17:34:33,666 INFO Successful login for admin from 127.0.0.1
+2026-03-07 17:34:33,679 INFO Successful login for admin from 127.0.0.1
+2026-03-07 22:04:19,308 INFO Failed login 1 for ip:127.0.0.1
+2026-03-07 22:04:19,309 INFO Failed login 1 for user:seller1
+2026-03-07 22:04:40,643 INFO Failed login 2 for ip:127.0.0.1
+2026-03-07 22:04:40,643 INFO Failed login 2 for user:seller1
+2026-03-07 22:04:58,730 INFO Successful login for seller1 from 127.0.0.1
+2026-03-07 22:09:13,989 INFO Successful login for seller1 from 127.0.0.1
+2026-03-07 22:20:36,757 INFO Successful login for bidder1 from 127.0.0.1
+2026-03-07 22:30:05,985 INFO Successful login for bidder1 from 127.0.0.1
+2026-03-07 22:37:34,470 INFO Successful login for bidder1 from 127.0.0.1
+2026-03-07 22:42:08,270 INFO Successful login for seller1 from 127.0.0.1
+2026-03-07 22:42:47,417 INFO Failed login 1 for ip:127.0.0.1
+2026-03-07 22:42:47,417 INFO Failed login 1 for user:bidder1
+2026-03-07 22:46:46,768 INFO Failed login 1 for ip:127.0.0.1
+2026-03-07 22:46:46,768 INFO Failed login 1 for user:bidder1
+2026-03-07 22:48:39,876 INFO Failed login 2 for ip:127.0.0.1
+2026-03-07 22:48:39,876 INFO Failed login 1 for user:bidder
+2026-03-07 22:50:06,154 INFO Successful login for seller1 from 127.0.0.1
+2026-03-07 22:50:06,649 INFO Successful login for bidder1 from 127.0.0.1
+2026-03-07 22:50:20,880 INFO Failed login 1 for ip:127.0.0.1
+2026-03-07 22:50:20,880 INFO Failed login 2 for user:bidder
+2026-03-07 22:53:46,134 INFO Failed login 2 for ip:127.0.0.1
+2026-03-07 22:53:46,134 INFO Failed login 1 for user:bidder1
+2026-03-07 22:53:58,732 INFO Successful login for bidder1 from 127.0.0.1
+2026-03-07 22:54:44,018 INFO Successful login for seller1 from 127.0.0.1
+2026-03-07 22:55:51,978 INFO Successful login for seller1 from 127.0.0.1
+2026-03-07 22:56:39,278 INFO Successful login for bidder1 from 127.0.0.1
+2026-03-07 22:57:09,372 INFO Successful login for seller1 from 127.0.0.1
+2026-03-07 22:59:35,518 INFO Successful login for bidder1 from 127.0.0.1
+2026-03-07 23:13:09,977 INFO Successful login for seller1 from 127.0.0.1
+2026-03-07 23:38:01,950 INFO Registration error for seller1: login_id already exists
+2026-03-07 23:38:02,194 INFO Successful login for seller1 from 127.0.0.1
+2026-03-07 23:41:24,726 INFO Successful login for seller1 from 127.0.0.1
+2026-03-08 00:33:33,567 INFO Successful login for andy from 127.0.0.1
+2026-03-08 00:35:27,934 INFO Successful login for seller1 from 127.0.0.1

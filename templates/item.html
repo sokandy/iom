@@ -1,22 +1,13 @@
 {% extends 'base.html' %}
 
 {% block content %}
-<div class="center-card-md">
+<div class="center-card-md page-card item-page">
   {% if not item %}
     <h1>Auction not available</h1>
     <p>This auction could not be found or the server is not configured for DB-backed auctions.</p>
     <p><a href="{{ url_for('auctions') }}">Back to auctions</a></p>
   {% else %}
   <div class="item-photo">
-    <style>
-      .gallery { display:flex; flex-direction:column; align-items:center; }
-      .gallery-main { max-width:700px; max-height:500px; }
-      .thumb-strip { margin-top:8px; display:flex; gap:8px; overflow-x:auto; }
-      .thumb-strip img { width:100px; height:70px; object-fit:cover; cursor:pointer; border:1px solid #ddd; }
-      .thumb-controls { display:flex; flex-direction:column; gap:4px; margin-left:4px; }
-      .thumb-item { display:flex; align-items:center; }
-      .thumb-action { background:#eee;border:1px solid #ccc;padding:2px 6px;margin-left:4px;cursor:pointer }
-    </style>
     <div class="gallery">
       <img id="main-image" class="gallery-main" src="{{ (images[0].variants.webp if images and images[0].get('variants') and images[0]['variants'].get('webp')) or (images[0].thumb_url if images and images[0].get('thumb_url') ) or (item.image_url if item.image_url is defined else url_for('static', filename='photo/' ~ item.item_id ~ '.jpg')) }}" alt="item photo" onerror="this.onerror=null;this.src='/static/placeholder.png'">
 
@@ -74,30 +65,44 @@
     </script>
   </div>
   <h1>{{ item.title }}</h1>
-  <p><strong>Seller:</strong> {{ item.seller_id or 'Unknown' }}</p>
-  <p><strong>Reserve price:</strong> {{ item.reserve_price or 'Not set' }}</p>
-  <p><strong>Duration (days):</strong> {{ item.duration }}</p>
-  <p><strong>Status:</strong> {{ item.status }}</p>
-  <hr>
-  <h3>Item description</h3>
-  <p>{{ item.description }}</p>
-  <hr>
-  <h3>Current highest bid</h3>
-  <p>
-    {% if highest_bid %}
-      {{ highest_bid.a_s_price }} by user {{ highest_bid.a_m_id }}
-    {% else %}
-      No bids yet
-    {% endif %}
+  <div class="item-meta-grid">
+    <p><strong>Seller:</strong> {{ item.seller_id or 'Unknown' }}</p>
+    <p><strong>Reserve price:</strong> {{ item.reserve_price or 'Not set' }}</p>
+    <p><strong>Duration (days):</strong> {{ item.duration }}</p>
+    <p><strong>Status:</strong> {{ item.status }}</p>
+    <p><strong>End time (UTC):</strong> {{ item.end_time or 'N/A' }}</p>
+  </div>
+  {% if time_left_text %}
+  <p class="time-left" id="time-left-live" data-status="{{ (item.status or '')|lower }}" data-end-time="{{ item.end_time|string|replace(' ', 'T') }}Z">
+    <strong>剩餘時間:</strong> <span class="time-left-value">{{ time_left_text }}</span>
   </p>
+  {% endif %}
+  <hr>
+  <section class="section-block">
+    <h3>Item description</h3>
+    <p>{{ item.description }}</p>
+  </section>
+  <hr>
+  <section class="section-block">
+    <h3>Highest bid</h3>
+    {% if highest_bid %}
+      <div class="highest-bid-row">
+        <span class="bid-amount-badge">{{ currency_label }}{{ '%.2f'|format(highest_bid.a_s_price|float) }}</span>
+        <span class="bidder-chip">Highest bidder: user {{ highest_bid.a_m_id }}</span>
+      </div>
+    {% else %}
+      <p class="muted-note">No bids yet</p>
+    {% endif %}
+  </section>
   <hr>
   {% if u_name %}
   <form method="post" action="{{ url_for('watchlist_toggle', auction_id=item.id) }}">
     <input type="hidden" name="action" value="{{ 'remove' if watchlisted else 'add' }}">
-    <button type="submit">{{ 'Remove from Watchlist' if watchlisted else 'Add to Watchlist' }}</button>
+    <button type="submit" class="btn-primary">{{ 'Remove from Watchlist' if watchlisted else 'Add to Watchlist' }}</button>
   </form>
   <hr>
   {% endif %}
+  <section class="section-block">
   <h3>Place a bid</h3>
   {# Compute a suggested minimum: use highest_bid.a_s_price if present, otherwise item.current_bid #}
   {% set raw_price = (highest_bid.a_s_price if highest_bid is defined and highest_bid else (item.current_bid if item.current_bid is defined else 0)) %}
@@ -110,14 +115,50 @@
   {% endif %}
   {% set suggested = (current + 1) | round(2) %}
 
-  <form method="post" action="{{ url_for('place_bid_route', auction_id=item.id) }}">
+  <form method="post" action="{{ url_for('place_bid_route', auction_id=item.id) }}" class="inline-bid-form">
     <label for="bid-amount">Your bid amount ({{ currency_label }}):</label>
     <input id="bid-amount" name="amount" type="number" step="0.01" min="{{ '%.2f' % suggested }}" required placeholder="{{ '%.2f' % suggested }}">
-    <button type="submit">Place Bid</button>
+    <button type="submit" class="btn-primary">Place Bid</button>
   </form>
+  </section>
   <hr>
-  <hr>
-  <p><a href="{{ url_for('index') }}">Back to home</a></p>
+  <p class="back-link"><a href="{{ url_for('index') }}">Back to home</a></p>
+
+  <script>
+    (function () {
+      var timerEl = document.getElementById('time-left-live');
+      if (!timerEl) return;
+
+      var status = (timerEl.dataset.status || '').toLowerCase();
+      if (status === 'closed' || status === 'cancelled') return;
+
+      var endRaw = timerEl.dataset.endTime;
+      if (!endRaw) return;
+      var endTime = new Date(endRaw);
+      if (isNaN(endTime.getTime())) return;
+
+      var valueEl = timerEl.querySelector('.time-left-value');
+      if (!valueEl) return;
+
+      function updateRemaining() {
+        var diffMs = endTime.getTime() - Date.now();
+        if (diffMs <= 0) {
+          valueEl.textContent = '已到結拍時間';
+          return;
+        }
+
+        var totalSeconds = Math.floor(diffMs / 1000);
+        var days = Math.floor(totalSeconds / 86400);
+        var secondsAfterDays = totalSeconds % 86400;
+        var minutes = Math.max(1, Math.ceil(secondsAfterDays / 60));
+
+        valueEl.textContent = '仲有 ' + days + ' 日 ' + minutes + ' 分鐘';
+      }
+
+      updateRemaining();
+      setInterval(updateRemaining, 30000);
+    })();
+  </script>
 
 </div>
   {% endif %}
